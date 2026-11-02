@@ -38,12 +38,17 @@ panel's stack, and keeps its width fitted.
 {
   "place": "none",
   "title": "Kata",
-  "tab": { "title": "Kata", "icon": "mods/kata/icon.svg" }
+  "tab": { "title": "Kata", "icon": "mods/kata/icon.svg",
+           "show": "command -v kata >/dev/null 2>&1" }
 }
 ```
 
 `place: "none"` keeps Herdr from docking a copy anywhere by itself; tab-host's
-stack is the only place it shows. Nothing here imports from tab-host and
+stack is the only place it shows. `tab.show` is the one conditional field: the
+string is run as `sh -c` in the shown space's folder on that space's machine,
+and only exit 0 draws the button — so a space on a machine without `kata`
+installed has no Kata tab to click, rather than an empty one. Nothing here
+imports from tab-host and
 nothing breaks without it — but with `place: "none"` the mod shows nowhere on
 its own, so the second door is a pane:
 

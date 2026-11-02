@@ -9,6 +9,13 @@ Read-only by design. It reads `kata list --json` and nothing else: no claim, no
 close, no comment, no `kata show`, and no writes anywhere. It is a window onto
 the same list `kata tui` shows, sized the way a 368 px side panel can take it.
 
+The branch filter follows the checkout. A space on the repo's own branch
+(`main`, or whatever `origin/HEAD` says) is not about one branch, so every task
+shows; a space on any other branch — a worktree, a topic checkout — shows the
+tasks recorded on that branch, which is the work being done there. A pick in the
+branch filter wins over that default for that checkout, and
+`data/kata/settings.json` can turn the default off or make it strict.
+
 ![Kata in the tab bar](preview.png)
 
 ```
@@ -139,8 +146,47 @@ layout, the width Files and Changes get — rounded 10, `background` fill, a 1 p
   and fill `hover`. A pick re-reads with that status and closes the detail view.
 - On the right, the **branch filter**: a 22 px rounded-6 button with a branch
   glyph, the branch it means ("All branches" in `dim` when it means every
-  branch), and a chevron. Clicking it opens the branch list; it does not float,
-  it replaces the tree — a panel with one scroll area stays one scroll area.
+  branch), and a chevron. It is filled `selected` while its list is open.
+  Clicking it opens the branch list; it does not float, it replaces the tree — a
+  panel with one scroll area stays one scroll area.
+
+### The branch filter, and the default it starts on
+
+It opens on the checkout's own answer, not on "everything":
+
+- **The branch is the space's, live from Herdr** (`panes()[…].branch`, else the
+  space's), so a `git checkout` is noticed within a second without running
+  anything, and nothing has to poll `git`.
+- **On the repo's own branch, every task shows.** The trunk is what
+  `origin/HEAD` names, falling back to `main`/`master`/`trunk` when the clone
+  does not record it. A checkout of `main` is not about one branch, so scoping
+  it would hide the work.
+- **On any other branch, that branch's tasks show** — a worktree or a topic
+  checkout is about that branch, and the tasks recorded on it (`work.branch`
+  metadata) are the ones being worked there.
+- **A default that matches nothing falls back to every branch**, with a line
+  above the tree: `Nothing on feat/explainer-skill — showing every branch`. Work
+  recorded under another name should not open as an empty panel, and the line
+  keeps the fallback from looking like an empty project.
+- **A pick is the person's, and it is kept**: picking a branch or "All
+  branches" in the list overrides the default for that checkout, and is kept
+  even when it matches nothing (the empty tree offers "Every branch" in one
+  click). Picks are keyed by folder *and* branch, so checking out another branch
+  offers the default again instead of an old branch's filter.
+
+`data/kata/settings.json` sets what the default is — one key, no UI:
+
+```json
+{ "branchFilter": "auto" }
+```
+
+- `auto` (the default, and what a missing or broken file means): as above.
+- `all`: never filter by branch; a checkout does not change the list.
+- `branch`: always filter by the space's branch, even on the trunk, and never
+  fall back — an empty tree then means an empty branch.
+
+The file is this machine's and is re-read on every refresh, so an edit lands
+within 15 seconds with no button to press.
 
 **The branch list** (while it is open): 26 px rows, 6 px side margins, 10 px
 padding, rounded 6, `hover` fill, the name at 12 px `muted` and its task count
@@ -173,7 +219,8 @@ fill:
 - With a branch filter hiding some of the read, a line under the tree says `N of
   M on this branch filter`, so nothing looks missing without a reason.
 - An empty read says so in the panel's own words ("No issues here", "Nothing
-  closed yet", "No issues on this branch") rather than drawing nothing.
+  closed yet", the filter the sentence is about) rather than drawing nothing,
+  and a filter the panel guessed offers "Every branch" as a row in that space.
 
 **The detail view** — a row's click — takes the whole panel, with a `‹ All
 issues` row to get back:
@@ -205,12 +252,15 @@ down — is the same note with kata's own message, and the ↻ above it retries.
 - **One read at a time.** Every read takes a generation number and an older
   answer that lands late is dropped, so a status click during a slow read
   cannot paint the old filter's rows under the new filter's buttons.
-- **Nothing is remembered once the place moves.** Rows, folds, the branch
-  filter and the open issue all belong to the space they came from; switching
-  space, or `cd`-ing to another repo, starts clean. State that survives a
-  *re-read* of the same place (folds, the branch filter, an open issue) stays,
-  which is what makes the 15 s refresh invisible; an open issue that the new
-  read no longer has closes back to the tree.
+- **Nothing is remembered once the place moves.** Rows, folds and the open
+  issue all belong to the space they came from; switching space, or `cd`-ing to
+  another repo, starts clean. State that survives a *re-read* of the same place
+  (folds, an open issue, the branch picks) stays, which is what makes the 15 s
+  refresh invisible; an open issue that the new read no longer has closes back
+  to the tree.
+- **A checkout is a filter change, not a read.** The 1 s timer reads the space's
+  folder, machine and branch from Herdr and does nothing at all unless one of
+  them moved; a moved folder re-reads, a moved branch only redraws.
 - **The tab is alive once opened.** tab-host keeps a block's copy while its
   block is in the stack, shown or hidden, so after the first click the 15 s
   read keeps running with the panel collapsed — opening the panel again shows a
@@ -249,11 +299,17 @@ herdr-app check ~/.config/herdr-app/mods/kata   # passes
 Live, in this Herdr, on `work` (a personal, wired layout):
 
 - **A space with a kata project.** A space on `~/work/posit-dev/paparazzi`
-  (bound `.kata.toml`) resolves to `paparazzi` with an undimmed chip and draws
-  its 23 open issues: `#jfqz` and `#54b1` fold and unfold, their children
-  indent, `+N` counts every task under a folded parent, priorities read
-  `P1`–`P4`, and closed issues (under **Closed**) come with green checks and
-  `muted` titles.
+  (bound `.kata.toml`, checked out on `feat/explainer-skill`) resolves to
+  `paparazzi` with an undimmed chip, opens with that branch in the filter
+  button, and — because no task in that read is recorded on it — says `Nothing
+  on feat/explainer-skill — showing every branch` and draws all 23 open issues:
+  `#jfqz` and `#54b1` fold and unfold, their children indent, `+N` counts every
+  task under a folded parent, priorities read `P1`–`P4`, and closed issues
+  (under **Closed**) come with green checks and `muted` titles.
+- **`branchFilter: "branch"`** in `data/kata/settings.json` turns the fallback
+  off within one refresh: the same space then draws the branch filter's empty
+  state (`No open issues on feat/explainer-skill.`) with the "Every branch" row
+  that clears it.
 - **A bigger project.** `~/work/posit-dev/shinychat` (84 open / 442 closed)
   draws three levels of nesting and the branch filter lists its branches with
   counts — `feat/history-exchange-tree` at 55, `feat/page-chat` at 42.
@@ -269,11 +325,12 @@ Live, in this Herdr, on `work` (a personal, wired layout):
 
 ## Files
 
-- `mods/kata/main.js` — one `View`, one screen: the read (`place`, `refresh`,
-  `read`), the project resolution (`tomlProject`, `repoName`, `resolveProject`),
-  the list model (`filtered`, `branches`, `rows`), and the drawing (`head`,
-  `filters`, `chooser`, `tree`, `row`, `detail`, `render`). No state lives
-  outside the copy.
+- `mods/kata/main.js` — one `View`, one screen: the place (`placeOf`,
+  `refresh`, `read`), the project resolution (`tomlProject`, `repoName`,
+  `resolveProject`), the branch default (`trunkBranch`, `branchMode`,
+  `automatic`, `isTrunk`, `key`, `chosen`, `fellBack`), the list model
+  (`filtered`, `branches`, `rows`), and the drawing (`head`, `filters`,
+  `chooser`, `tree`, `row`, `detail`, `render`). No state lives outside the copy.
 - `mods/kata/mod.json` — the contract, verbatim.
 - `mods/kata/icon.svg` — the tab bar's glyph, a list with two checks;
   `chevron-*.svg`, `fold.svg`, `unfold.svg`, `refresh.svg`, `branch.svg`,
@@ -289,11 +346,13 @@ Live, in this Herdr, on `work` (a personal, wired layout):
 - **400 rows per status.** A project with more than 400 issues in one status
   shows the 400 most recently updated; the filters, not scrolling, are how the
   rest is reached.
+- **`work.branch` is a convention, not a kata field.** Issues that carry their
+  branch under another key show under "No branch", and the branch default cannot
+  see them — which is why a default that matches nothing falls back to every
+  branch rather than opening empty.
 - **The tree is what the list knows.** A child whose parent falls outside the
   read is drawn as a root, and refs to issues outside the read are text, not
   links.
-- **`work.branch` is a convention, not a kata field.** Issues that carry their
-  branch under another key show under "No branch".
 - **No keyboard.** The panel is click-only (and hover), on purpose: it never
   takes focus from the terminal it was opened from.
 - **One list, no comments.** The detail view is the issue, not its thread;

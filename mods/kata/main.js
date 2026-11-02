@@ -14,6 +14,13 @@
 // opens the issue's own details, out of the same read — nothing here posts,
 // claims, closes or comments, and nothing asks kata for more than one list.
 //
+// The branch filter follows the checkout. A space on the repo's own branch
+// (`main`, or whatever origin/HEAD says) is not about one branch, so every task
+// shows; a space on any other branch — a worktree, a topic checkout — shows the
+// tasks recorded on that branch, since that is the work being done there. A
+// person's pick in the branch filter wins over that default for that checkout,
+// and `data/kata/settings.json` can turn the default off or make it strict.
+//
 // Which project is "the space's" is decided in this order, and the panel says
 // which one it landed on:
 //   1. the `kata.toml` binding at or above the folder the space's focused pane
@@ -24,7 +31,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
-import { spaces, focused, panes, exec, theme, readTextFile } from "herdr";
+import { spaces, focused, panes, exec, theme, readTextFile, appHome } from "herdr";
 
 const ICONS = "mods/kata";
 // The status filter's buttons, in the order they draw: what is left to do first.
@@ -44,6 +51,10 @@ const BRANCH = "work.branch";
 // How far up the folder is searched for a `kata.toml`. Twelve levels is deeper
 // than any checkout and shallow enough to stay four cheap reads.
 const UP = 12;
+// The names a repo's own branch has when `origin/HEAD` cannot be asked.
+const TRUNK = ["main", "master", "trunk"];
+// This panel's settings, on this machine (see branchMode).
+const SETTINGS = () => `${appHome()}/data/kata/settings.json`;
 
 // ---- the place ----
 
@@ -51,10 +62,18 @@ const UP = 12;
 // focus is, else where the space was made. A space in a subfolder of its repo
 // still resolves to the repo's binding (the search walks up), which is why the
 // pane's own folder is the right thing to ask about and not something shared.
-function folderOf(space) {
+// The branch comes from the same place, and from Herdr rather than `git`: it is
+// live, so a checkout is noticed without running anything.
+function placeOf(space) {
   const f = focused();
   const pane = f?.pane ? panes().find((p) => p.pane === f.pane) : null;
-  return pane?.cwd || f?.cwd || space?.folder || null;
+  // A layout terminal block focused: the pane that owns that terminal, if any.
+  const shown = !pane && f?.terminal ? panes().find((p) => p.terminal === f.terminal) : null;
+  return {
+    folder: pane?.cwd || f?.cwd || space?.folder || null,
+    on: space?.machine ?? null,
+    branch: pane ? pane.branch : shown ? shown.branch : (space?.branch ?? null),
+  };
 }
 
 const activeSpace = () => spaces().find((s) => s.active) ?? null;
@@ -113,6 +132,37 @@ async function resolveProject(folder, on) {
   }
   if (names.includes(repo)) return { name: repo, bound: false };
   return { missing: true, repo };
+}
+
+// The repo's own branch: the one the clone was made from, recorded once as
+// `origin/HEAD`. Without that ref there is no answer here, and TRUNK decides.
+async function trunkBranch(folder, on) {
+  try {
+    const r = await exec("git", ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { cwd: folder, on });
+    if (r.code === 0) {
+      const name = String(r.stdout ?? "").trim().replace(/^origin\//, "");
+      if (name) return name;
+    }
+  } catch { /* no origin, or no git: the usual names decide */ }
+  return null;
+}
+
+// This machine's settings for the panel — one file, one key, no UI:
+//
+//   { "branchFilter": "auto" | "all" | "branch" }
+//
+// "auto" (the default) follows the space's branch off the trunk, "all" never
+// filters, "branch" filters even on the trunk. A missing or broken file is
+// "auto": the panel never fails to draw over a preference.
+async function branchMode() {
+  const text = await readTextFile(SETTINGS()).catch(() => null);
+  if (!text) return "auto";
+  try {
+    const mode = JSON.parse(text)?.branchFilter;
+    return mode === "all" || mode === "branch" ? mode : "auto";
+  } catch {
+    return "auto";
+  }
 }
 
 // kata prints its refusal as JSON on stderr: the message, and the hint that
@@ -215,9 +265,14 @@ export default class Kata extends View {
     this.resolved = null;    // { name, bound } | { missing, repo }: once per place
     this.issues = [];        // the last good read, kept while a new one runs
     this.status = "open";
-    // `undefined` is every branch, `null` the tasks with none, a string one
-    // branch: the three answers the branch filter offers.
-    this.branch = undefined;
+    // The branch filter. `picked` holds what the person chose, per checkout —
+    // keyed "folder|branch", so a checkout of another branch is offered the
+    // default again — with `undefined` for every branch, `null` for the tasks
+    // with none, and a branch name otherwise. `mode` is settings.json's
+    // branchFilter, `trunk` the repo's own branch (asked of git once per place).
+    this.picked = new Map();
+    this.mode = "auto";
+    this.trunk = null;
     this.branchOpen = false;
     this.collapsed = new Set();
     this.selected = null;    // the uid the detail view shows
@@ -232,39 +287,45 @@ export default class Kata extends View {
     // `kata` CLI — so the panel asks again on a timer. Fifteen seconds is the
     // pace of `kata tui`'s own refresh and costs one `exec`.
     cx.timer.every(15000, (cx) => this.refresh(cx));
-    // The other timer reads no data: it only notices that the space moved and
-    // asks again then. Nothing is redrawn unless it did.
+    // The other timer reads no data: it only notices that the place moved — a
+    // space, a folder, a checkout — and asks again then. Nothing is redrawn
+    // unless it did.
     cx.timer.every(1000, (cx) => {
       const at = this.place();
-      if (at.folder !== this.origin?.folder || at.on !== this.origin?.on) this.refresh(cx);
+      if (at.folder !== this.origin?.folder || at.on !== this.origin?.on
+        || at.branch !== this.origin?.branch) this.refresh(cx);
     });
   }
 
   place() {
-    const space = activeSpace();
-    return { folder: folderOf(space), on: space?.machine ?? null };
+    return placeOf(activeSpace());
   }
 
-  // Another space (or another folder in this one) is another project: the rows,
-  // the folded ones, the open branch and the open issue all belong to the old
-  // place and go with it. `fresh` also forgets which project this place is,
-  // which is what the button does and the timer does not: a project appears
-  // when someone runs `kata init`, and that is a fact worth re-asking for on a
+  // Another space, another checkout or another folder is another place: the
+  // rows, the folds and the open issue belong to the old one and go with it.
+  // The branch filter is not state of the mod's — it follows the checkout (see
+  // automatic) — so a checkout is a filter change, not a read: nothing asked of
+  // kata would come back different. `fresh` also forgets which project the
+  // place is, which is what the button does and the timer does not: a project
+  // appears when someone runs `kata init`, and that is worth re-asking for on a
   // click rather than on every read.
   refresh(cx, fresh = false) {
     const at = this.place();
     const moved = at.folder !== this.origin?.folder || at.on !== this.origin?.on;
+    const branched = at.branch !== this.origin?.branch;
+    this.origin = at;
     if (moved || fresh) {
-      this.origin = at;
       this.resolved = null;
+      this.trunk = null;
       this.folder = at.folder;
       this.issues = [];
-      this.branch = undefined;
       this.branchOpen = false;
       this.collapsed = new Set();
       this.selected = null;
       this.failure = null;
       this.missing = false;
+    } else if (branched) {
+      return cx.notify();
     }
     this.read(cx);
   }
@@ -283,10 +344,19 @@ export default class Kata extends View {
     this.loading = true;
     cx.notify();
     cx.spawn(async (cx) => {
+      // The settings file is this machine's and tiny: read it on every pass, so
+      // editing it lands within one refresh and needs no button.
+      const mode = await branchMode();
+      if (gen !== this.gen) return;
+      this.mode = mode;
       let project = this.resolved;
       if (!project) {
-        const r = await resolveProject(origin.folder, origin.on);
+        const [r, trunk] = await Promise.all([
+          resolveProject(origin.folder, origin.on),
+          trunkBranch(origin.folder, origin.on),
+        ]);
         if (gen !== this.gen) return;
+        this.trunk = trunk;
         if (r.error) {
           // Not remembered: the next read tries again, so a daemon that comes
           // back or a `yarn global add kata` fixes the panel by itself.
@@ -311,10 +381,6 @@ export default class Kata extends View {
         this.failure = null;
         this.missing = false;
         this.issues = out.issues;
-        // A branch the new read no longer has falls back to every branch.
-        if (this.branch !== undefined && this.branch !== null && !this.branches().some(([b]) => b === this.branch)) {
-          this.branch = undefined;
-        }
         if (this.selected && !this.issues.some((i) => i.uid === this.selected)) this.selected = null;
       }
       settle(cx);
@@ -327,9 +393,49 @@ export default class Kata extends View {
     return this.issues.find((i) => i.uid === uid) ?? null;
   }
 
+  // The filter the space asks for by itself. On the repo's own branch every task
+  // is in play — a checkout of `main` is not about one branch. On any other
+  // branch it is: a worktree, a topic checkout, and the tasks recorded on that
+  // branch are the ones being worked on there. `mode` can say "all" (never
+  // filter) or "branch" (filter even on the trunk) instead.
+  automatic() {
+    const branch = this.origin?.branch ?? null;
+    if (this.mode === "all" || !branch) return undefined;
+    if (this.mode === "auto" && this.isTrunk(branch)) return undefined;
+    return branch;
+  }
+
+  // The repo's default branch decides what the trunk is; without origin/HEAD to
+  // ask, the names it usually has do.
+  isTrunk(branch) {
+    return branch === this.trunk || TRUNK.includes(branch);
+  }
+
+  // A pick belongs to the checkout it was made in, so a checkout of another
+  // branch is offered the default again rather than an old branch's filter.
+  key() {
+    return `${this.origin?.folder ?? ""}|${this.origin?.branch ?? ""}`;
+  }
+
+  // The filter in force: the person's pick for this checkout, else the default.
+  chosen() {
+    return this.picked.has(this.key()) ? this.picked.get(this.key()) : this.automatic();
+  }
+
+  // An automatic branch filter that matches nothing falls back to every branch —
+  // a worktree whose tasks were recorded under another name should not open
+  // empty — and the panel says so above the tree. A pick is the person's own,
+  // so it is kept even when it is empty.
+  fellBack() {
+    const branch = this.chosen();
+    return this.mode === "auto" && !this.picked.has(this.key()) && this.issues.length > 0
+      && branch !== undefined && !this.issues.some((i) => i.branch === branch);
+  }
+
   filtered() {
-    if (this.branch === undefined) return this.issues;
-    return this.issues.filter((i) => i.branch === this.branch);
+    const branch = this.fellBack() ? undefined : this.chosen();
+    if (branch === undefined) return this.issues;
+    return this.issues.filter((i) => i.branch === branch);
   }
 
   branches() {
@@ -458,7 +564,16 @@ export default class Kata extends View {
         })
         .child(label);
     };
-    const label = this.branch === undefined ? "All branches" : this.branch === null ? "No branch" : this.branch;
+    const chosen = this.chosen();
+    const label = chosen === undefined ? "All branches" : chosen === null ? "No branch" : chosen;
+    // The button says where its answer came from: the space's own branch, or a
+    // pick of the person's, which is what they need to know to undo it.
+    const picked = this.picked.has(this.key());
+    const tip = picked
+      ? "Your pick for this checkout — every branch is one click away"
+      : chosen === undefined
+        ? `Every branch: this space is on ${this.origin?.branch ?? "no checkout"}`
+        : `This space's branch, ${chosen} — pick another branch here`;
     return h_flex().id("kata-filters").h(34).flex_none().px(12).gap(4).items_center()
       .border_b(1).border_color(t.border)
       .children(STATUSES.map(segment))
@@ -467,11 +582,11 @@ export default class Kata extends View {
         .items_center().cursor_pointer()
         .when(this.branchOpen, (el) => el.bg(t.selected))
         .when(!this.branchOpen, (el) => el.hover((s) => s.bg(t.hover)))
-        .tooltip("Filter by the branch a task is on")
+        .tooltip(tip)
         .on_click((_e, cx) => { this.branchOpen = !this.branchOpen; cx.notify(); })
         .child(svg(`${ICONS}/branch.svg`).size(11).flex_none().text_color(t.dim))
         .child(div().flex_1().min_w(0).truncate().text_size(11)
-          .text_color(this.branch === undefined ? t.dim : t.muted).child(label))
+          .text_color(chosen === undefined ? t.dim : t.muted).child(label))
         .child(svg(`${ICONS}/chevron-down.svg`).size(10).flex_none().text_color(t.dim)));
   }
 
@@ -481,7 +596,8 @@ export default class Kata extends View {
   chooser(cx) {
     const t = theme();
     const pick = (value, cx) => {
-      this.branch = value;
+      // Kept for this checkout only: another branch's checkout is another answer.
+      this.picked.set(this.key(), value);
       this.branchOpen = false;
       cx.notify();
     };
@@ -495,11 +611,12 @@ export default class Kata extends View {
       .child(div().flex_none().text_size(10.5).text_color(t.dim).child(String(count)));
     const branches = this.branches();
     const loose = this.loose();
+    const chosen = this.chosen();
     return v_flex().id("kata-branches").flex_1().min_h(0).overflow_y_scrollbar().py(4)
-      .child(row("kata-b-all", undefined, "All branches", this.issues.length, this.branch === undefined))
+      .child(row("kata-b-all", undefined, "All branches", this.issues.length, chosen === undefined))
       .children(branches.map(([name, count], i) =>
-        row(`kata-b-${i}`, name, name, count, this.branch === name)))
-      .when(loose > 0, (el) => el.child(row("kata-b-none", null, "No branch", loose, this.branch === null)));
+        row(`kata-b-${i}`, name, name, count, chosen === name)))
+      .when(loose > 0, (el) => el.child(row("kata-b-none", null, "No branch", loose, chosen === null)));
   }
 
   row(entry, cx) {
@@ -534,19 +651,41 @@ export default class Kata extends View {
         .child(div().flex_none().text_size(10.5).text_color(t.dim).child(`+${entry.under}`)));
   }
 
+  // What an empty tree says: which filter is hiding the work.
+  emptyLine() {
+    const scope = this.status === "all" ? "issues" : `${this.status} issues`;
+    const chosen = this.chosen();
+    if (chosen === undefined) return `No ${scope} in this project.`;
+    if (chosen === null) return `No ${scope} without a branch.`;
+    return `No ${scope} on ${chosen}.`;
+  }
+
   tree(cx) {
     const t = theme();
     const rows = this.rows();
     const here = this.filtered().length;
+    const chosen = this.chosen();
+    // An empty tree that a filter emptied offers the whole project in one click;
+    // the default filter is a guess, and a guess must not look like an empty repo.
+    const escape = chosen !== undefined && !this.picked.has(this.key())
+      ? h_flex().id("kata-empty-escape").h(24).flex_none().pr(8).gap(6).rounded(6).items_center()
+        .cursor_pointer().hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => { this.picked.set(this.key(), undefined); cx.notify(); })
+        .child(svg(`${ICONS}/branch.svg`).size(11).flex_none().text_color(t.dim))
+        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted)
+          .child("Every branch"))
+      : null;
+    const empty = v_flex().px(16).py(14).gap(5)
+      .child(div().text_size(12.5).text_color(t.muted)
+        .child(this.status === "closed" ? "Nothing closed yet" : "No issues here"))
+      .child(div().text_size(11.5).text_color(t.dim).child(this.emptyLine()))
+      .when(Boolean(escape), (el) => el.child(escape));
     return v_flex().id("kata-scroll").flex_1().min_h(0).overflow_y_scrollbar().py(4)
-      .when(rows.length === 0 && !this.loading, (el) => el.child(v_flex().px(16).py(14).gap(4)
-        .child(div().text_size(12.5).text_color(t.muted).child(this.status === "closed" ? "Nothing closed yet" : "No issues here"))
-        .child(div().text_size(11.5).text_color(t.dim)
-          .child(this.branch === undefined ? `No ${this.status === "all" ? "" : `${this.status} `}issues in this project.` : "No issues on this branch."))))
+      .when(rows.length === 0 && !this.loading, (el) => el.child(empty))
       .children(rows.map((e) => this.row(e, cx)))
       // How many of the read are shown, when a filter is hiding some. The count
       // says the tree is not the whole project, so nobody hunts for a missing task.
-      .when(this.branch !== undefined && here !== this.issues.length, (el) => el
+      .when(chosen !== undefined && here !== this.issues.length, (el) => el
         .child(div().px(16).py(8).text_size(10.5).text_color(t.dim)
           .child(`${here} of ${this.issues.length} on this branch filter`)));
   }
@@ -660,6 +799,11 @@ export default class Kata extends View {
     return root
       .child(this.head(cx))
       .child(this.filters(cx))
+      // The default filter landed on a branch with nothing on it: say so, so an
+      // unexpected list is not read as an empty project.
+      .when(this.fellBack(), (el) => el
+        .child(div().px(14).pt(6).text_size(11).text_color(t.dim).truncate()
+          .child(`Nothing on ${this.chosen()} — showing every branch`)))
       // A read that failed while rows are on screen says so over them, rather
       // than taking the panel away from what the person is reading.
       .when(Boolean(this.failure), (el) => el

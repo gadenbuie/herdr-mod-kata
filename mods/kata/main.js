@@ -276,6 +276,10 @@ export default class Kata extends View {
     this.branchOpen = false;
     this.collapsed = new Set();
     this.selected = null;    // the uid the detail view shows
+    // The issues the detail view came through, oldest first, the one before
+    // the shown issue last: the trail `back` walks. Opening from the tree
+    // starts a new one, so the tree is always where an empty trail ends.
+    this.trail = [];
     this.folder = null;      // the folder the shown project was read from
     this.loading = false;
     this.ready = false;
@@ -322,6 +326,7 @@ export default class Kata extends View {
       this.branchOpen = false;
       this.collapsed = new Set();
       this.selected = null;
+      this.trail = [];
       this.failure = null;
       this.missing = false;
     } else if (branched) {
@@ -381,7 +386,11 @@ export default class Kata extends View {
         this.failure = null;
         this.missing = false;
         this.issues = out.issues;
-        if (this.selected && !this.issues.some((i) => i.uid === this.selected)) this.selected = null;
+        // A step the new read no longer has is a step that cannot be taken: the
+        // trail keeps only what the tree above it can still show.
+        const here = new Set(this.issues.map((i) => i.uid));
+        this.trail = this.trail.filter((uid) => here.has(uid));
+        if (this.selected && !here.has(this.selected)) this.selected = null;
       }
       settle(cx);
     });
@@ -501,6 +510,39 @@ export default class Kata extends View {
     cx.notify();
   }
 
+  // ---- the trail ----
+
+  // Every way into a detail view comes through here, so the trail is the same
+  // whichever link was followed — a row in the tree, a ref chip, the parent.
+  // From the tree the trail starts over (there is nothing behind it); from
+  // another issue it is one step longer.
+  open(uid, cx) {
+    if (!uid || uid === this.selected) return;
+    if (this.selected) this.trail.push(this.selected);
+    else this.trail = [];
+    this.selected = uid;
+    cx.notify();
+  }
+
+  // One step back along the trail, which ends at the tree.
+  back(cx) {
+    this.selected = this.trail.pop() ?? null;
+    cx.notify();
+  }
+
+  // The way out: the trail goes and the tree is back, whatever depth it was at.
+  dismiss(cx) {
+    this.trail = [];
+    this.selected = null;
+    cx.notify();
+  }
+
+  // Where `back` goes, or null when it goes to the tree. The issue it names is
+  // the one the last step came from.
+  cameFrom() {
+    return this.trail.length > 0 ? this.by(this.trail[this.trail.length - 1]) : null;
+  }
+
   // ---- pieces ----
 
   iconButton(id, icon, tip, action, spin = false) {
@@ -558,6 +600,9 @@ export default class Kata extends View {
         .on_click((_e, cx) => {
           if (this.status === value) return;
           this.status = value;
+          // Another list is another tree: the trail behind the detail view was
+          // walked through rows this read will not show.
+          this.trail = [];
           this.selected = null;
           this.branchOpen = false;
           this.read(cx);
@@ -627,7 +672,7 @@ export default class Kata extends View {
     const step = Math.min(entry.depth, 8);
     return h_flex().id(`kata-row-${i.uid}`).h(26).flex_none().mx(6).pl(8 + step * 14).pr(8).gap(6)
       .rounded(6).items_center().cursor_pointer().hover((s) => s.bg(t.hover))
-      .on_click((_e, cx) => { this.selected = i.uid; cx.notify(); })
+      .on_click((_e, cx) => this.open(i.uid, cx))
       // A folded row's chevron is a button of its own: the row behind it opens
       // the issue, and a click that meant "fold" must not also open it.
       .child(entry.kids > 0
@@ -712,10 +757,41 @@ export default class Kata extends View {
           return h_flex().id(`kata-ref-${r.uid}`).h(20).flex_none().px(6).gap(4).rounded(5).items_center()
             .bg(t.raised)
             .when(known, (el) => el.cursor_pointer().hover((s) => s.bg(t.selected)))
-            .when(known, (el) => el.on_click((_e, cx) => { this.selected = r.uid; cx.notify(); }))
+            .when(known, (el) => el.on_click((_e, cx) => this.open(r.uid, cx)))
             .child(div().text_size(10.5).text_color(closed ? t.dim : t.muted).child(`#${r.ref}`))
             .when(closed, (el) => el.child(svg(`${ICONS}/check-circle.svg`).size(9).flex_none().text_color(t.done)));
         })));
+  }
+
+  // The way back, and the way out of the detail view. With a trail behind it,
+  // the back button names the issue it returns to: a chain of refs is easy to
+  // follow and hard to remember, so "back" has to say where it goes. The tree
+  // keeps a button of its own beside it, which clears the trail however deep it
+  // is. With nothing behind it, back *is* the tree, and one button says so
+  // rather than offering the same step twice.
+  nav(cx) {
+    const t = theme();
+    const came = this.cameFrom();
+    const behind = this.trail.length > 1 ? ` (${this.trail.length - 1} more behind it)` : "";
+    const back = h_flex().id("kata-back").h(28).flex_1().min_w(0).px(8).gap(4).rounded(6).items_center()
+      .cursor_pointer().hover((s) => s.bg(t.hover))
+      .on_click((_e, cx) => (came ? this.back(cx) : this.dismiss(cx)))
+      .child(svg(`${ICONS}/chevron-left.svg`).size(11).flex_none().text_color(t.dim))
+      .when(Boolean(came), (el) => el
+        .tooltip(`Back to #${came.ref} — ${came.title}${behind}`)
+        .child(div().flex_none().text_size(10.5).text_color(t.dim).child(`#${came.ref}`))
+        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(came.title)))
+      .when(!came, (el) => el
+        .child(div().text_size(11.5).text_color(t.muted).child("All issues")));
+    const home = h_flex().id("kata-all").h(28).flex_none().px(8).gap(4).rounded(6).items_center()
+      .cursor_pointer().hover((s) => s.bg(t.hover))
+      .tooltip("All issues: the whole tree, and the trail behind it cleared")
+      .on_click((_e, cx) => this.dismiss(cx))
+      .child(svg(`${ICONS}/icon.svg`).size(11).flex_none().text_color(t.dim))
+      .child(div().flex_none().text_size(11.5).text_color(t.muted).child("All issues"));
+    return h_flex().id("kata-nav").h(28).flex_none().mx(6).gap(2).items_center()
+      .child(back)
+      .when(Boolean(came), (el) => el.child(home));
   }
 
   detail(i, cx) {
@@ -742,7 +818,7 @@ export default class Kata extends View {
     const parentRow = parent
       ? h_flex().id("kata-parent").h(20).flex_none().px(6).rounded(5).bg(t.raised).items_center()
         .cursor_pointer().hover((s) => s.bg(t.selected))
-        .on_click((_e, cx) => { this.selected = parent.uid; cx.notify(); })
+        .on_click((_e, cx) => this.open(parent.uid, cx))
         .child(div().flex_1().min_w(0).truncate().text_size(10.5).text_color(t.muted)
           .child(`#${parent.ref} ${parent.title}`))
       : null;
@@ -767,7 +843,7 @@ export default class Kata extends View {
       .when(i.blocks.length > 0, (el) => el.child(this.chips("Blocks", i.blocks, cx)))
       .when(i.blockedBy.length > 0, (el) => el.child(this.chips("Blocked by", i.blockedBy, cx)))
       .when(i.related.length > 0, (el) => el.child(this.chips("Related", i.related, cx)));
-    return v_flex().id("kata-detail").w_full().flex_none().pb(16).child(back).child(body);
+    return v_flex().id("kata-detail").w_full().flex_none().pb(16).child(this.nav(cx)).child(body);
   }
 
   render(cx) {

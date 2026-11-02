@@ -222,8 +222,20 @@ fill:
   closed yet", the filter the sentence is about) rather than drawing nothing,
   and a filter the panel guessed offers "Every branch" as a row in that space.
 
-**The detail view** — a row's click — takes the whole panel, with a `‹ All
-issues` row to get back:
+**The detail view** — a row's click — takes the whole panel, under a 28 px nav
+row with the two ways out of it:
+
+- **`‹ #ref title`** — back one step along the trail, naming the issue it
+  returns to. A chain of refs is easy to follow and hard to remember, so back
+  says where it goes, and its tooltip adds how many steps are behind that one
+  (`#wvb0 Overlay layer paints below the …`, `Back to #wvb0 — Overlay layer
+  paints below the terminal (1 more behind it)`). On the first issue opened
+  from the tree there is nothing behind it, so the same button reads `‹ All
+  issues` and shows the tree: a "back" that goes where "all issues" goes is one
+  button, not two.
+- **`☑ All issues`**, at the right, drawn only when there is a trail: the whole
+  tree, with the trail behind it cleared however deep it was. Its 11 px glyph is
+  the tab's own list icon.
 
 - `#ref`, a status chip (`open`, or the close reason — `done`, `duplicate`…, on
   a `done` fill), and the priority.
@@ -252,12 +264,19 @@ down — is the same note with kata's own message, and the ↻ above it retries.
 - **One read at a time.** Every read takes a generation number and an older
   answer that lands late is dropped, so a status click during a slow read
   cannot paint the old filter's rows under the new filter's buttons.
-- **Nothing is remembered once the place moves.** Rows, folds and the open
-  issue all belong to the space they came from; switching space, or `cd`-ing to
-  another repo, starts clean. State that survives a *re-read* of the same place
-  (folds, an open issue, the branch picks) stays, which is what makes the 15 s
-  refresh invisible; an open issue that the new read no longer has closes back
-  to the tree.
+- **Nothing is remembered once the place moves.** Rows, folds, the open issue
+  and the trail behind it all belong to the space they came from; switching
+  space, or `cd`-ing to another repo, starts clean. State that survives a
+  *re-read* of the same place (folds, an open issue, the branch picks) stays,
+  which is what makes the 15 s refresh invisible; an open issue that the new
+  read no longer has closes back to the tree.
+- **The trail is the issues, not a browser history.** Following a ref chip or
+  the parent chip is one step further in; opening a row in the tree starts a
+  new trail at that row, which is why the tree is always where an empty trail
+  ends. `‹` walks the steps one at a time, `All issues` clears them. A status
+  pick, a moved place and the ↻ button all forget the trail, and a read that no
+  longer has an issue drops that step: the panel never offers a step it cannot
+  take.
 - **A checkout is a filter change, not a read.** The 1 s timer reads the space's
   folder, machine and branch from Herdr and does nothing at all unless one of
   them moved; a moved folder re-reads, a moved branch only redraws.
@@ -315,7 +334,11 @@ Live, in this Herdr, on `work` (a personal, wired layout):
   counts — `feat/history-exchange-tree` at 55, `feat/page-chat` at 42.
 - **The detail view.** Opening `#jfqz` shows its ref, `open`, `P3`, its author,
   labels, age, `#wvb0, #ybxy` as children, and its description as rendered
-  markdown.
+  markdown. Following a ref chip to another issue swaps the nav row's `‹ All
+  issues` for `‹ #jfqz Recording robustness defects` and adds `All issues` at the
+  right; `‹` walks back one issue at a time, naming each, and returns to `‹ All
+  issues` at the start of the trail, while `All issues` reaches the tree in one
+  click from any depth.
 - **A space with no kata project** (`~/play/gadenbuie/herdr-mod-plannotator`)
   shows the placeholder naming the folder and `kata init --project
   herdr-mod-plannotator`.
@@ -329,8 +352,9 @@ Live, in this Herdr, on `work` (a personal, wired layout):
   `refresh`, `read`), the project resolution (`tomlProject`, `repoName`,
   `resolveProject`), the branch default (`trunkBranch`, `branchMode`,
   `automatic`, `isTrunk`, `key`, `chosen`, `fellBack`), the list model
-  (`filtered`, `branches`, `rows`), and the drawing (`head`, `filters`,
-  `chooser`, `tree`, `row`, `detail`, `render`). No state lives outside the copy.
+  (`filtered`, `branches`, `rows`), the trail between issues (`open`, `back`,
+  `dismiss`, `cameFrom`, `nav`), and the drawing (`head`, `filters`, `chooser`,
+  `tree`, `row`, `detail`, `render`). No state lives outside the copy.
 - `mods/kata/mod.json` — the contract, verbatim.
 - `mods/kata/icon.svg` — the tab bar's glyph, a list with two checks;
   `chevron-*.svg`, `fold.svg`, `unfold.svg`, `refresh.svg`, `branch.svg`,

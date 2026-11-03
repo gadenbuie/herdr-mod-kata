@@ -183,8 +183,8 @@ thing.
   title, and the priority.
 - The marker is a filled circle at 6 px: `ansi3` (amber) when an open issue
   blocks something open — its tooltip says `Blocked by an open issue` — else
-  `dim`. A closed issue gets a `done`-green check-circle instead, and its title
-  turns `muted`.
+  `dim`. A closed issue gets a check-circle in the theme's `done` color
+  instead (blue in Herdr's dark theme), and its title turns `muted`.
 - The title truncates; if it is the row's only content, the row is still
   clickable edge to edge.
 - The priority chip (`P0`…`P4`), drawn only when the issue carries one, is
@@ -551,7 +551,8 @@ one closed task, tasks on two branches):
 - **The tree.** The parent folds and unfolds, `+N` counts every task under it,
   children indent, priorities read `P1`–`P4` in the queue's own colors, the
   blocked task's marker is amber with its tooltip, and under **Closed** the
-  closed tasks come with green checks and `muted` titles.
+  closed tasks come with checks in the theme's `done` color and `muted`
+  titles.
 - **The filters.** **Open/Closed/All** each re-read with their own status; the
   branch filter lists every branch the status has, most tasks first, with
   "All branches" first and "No branch" last, and a pick holds for that

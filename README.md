@@ -42,7 +42,8 @@ manifest is the whole contract.
 - **The tree**, refreshed every 15 s (`kata tui`'s own pace) and on the ↻
   button: open before closed, then priority, then what moved last. A parent
   folds, its `+N` counts every task under it, an open task that blocks open
-  work carries an amber marker, and a closed one a green check.
+  work carries an amber marker, and a closed one a check in the theme's `done`
+  color.
 - **The branch filter, on the checkout's side.** On the repo's own branch
   every task shows; on any other branch — a worktree, a topic checkout — the
   tasks recorded on that branch show, and a default that matches nothing falls

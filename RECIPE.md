@@ -266,9 +266,14 @@ it and closing it are the same picture.
 - **The filters above still hold.** A search narrows the list the status and
   branch filters made rather than reaching around them, so the read stays one
   read and the counts stay the filters' own. A search that finds nothing says
-  what it looked at — `Searched open issues — Closed and All search the rest.`,
-  or `Searched open issues on feat/recall — …` — instead of declaring the task
-  gone. A read that stopped at its ceiling keeps its `N of M` line and its
+  what it looked at — `Searched the open issues — Closed and All search the
+  rest.`, or `Searched every issue on feat/recall.` — instead of declaring the
+  task gone, and while the status is not **All** it offers the one click that
+  widens the search: a `Search all statuses` row, a magnifier and 11.5 px
+  `muted`, hovered like a row of the tree. It is the same shortcut the tree's
+  empty state gives a branch, and the same `setStatus` the pills run — a person
+  reading "nothing matches" should not have to work out which pill would have
+  found it. A read that stopped at its ceiling keeps its `N of M` line and its
   **Load more** row under the results.
 - **Opening it takes the keyboard, on a click.** The field is the one thing in
   this panel that ever holds it (see *How it behaves*); the `×` empties it and
@@ -466,11 +471,13 @@ Live, in this Herdr, on `work` (a personal, wired layout):
   with the same query searches the closed list instead — nine tasks, `9 in the
   description`, green checks and `muted` titles — because a status pill is a
   different read, not a different search. `zzz nope` says `Nothing matches
-  "zzz nope"` and `Searched open issues — Closed and All search the rest.` The
-  `×` empties the field and keeps it, the magnifier closes it and the tree comes
-  back with its folds — the fold button is gone while results are drawn, back
-  with the tree — and a row still opens its issue, with `‹` returning to the
-  results.
+  "zzz nope"`, `Searched the open issues — Closed and All search the rest.`,
+  and a `Search all statuses` row under it that reads every status and searches
+  that; on **All** the row is gone and the line reads `Searched every issue.`
+  The `×` empties the field and keeps it, the magnifier closes it and the tree
+  comes back with its folds — the fold button is gone while results are drawn,
+  back with the tree — and a row still opens its issue, with `‹` returning to
+  the results.
 - **A space with no kata project** (`~/play/gadenbuie/herdr-mod-plannotator`)
   shows the placeholder naming the folder and `kata init --project
   herdr-mod-plannotator`.
@@ -489,9 +496,9 @@ Live, in this Herdr, on `work` (a personal, wired layout):
   `needParents`), the read's ceiling (`bigger`, `footNote`, `moreButton`,
   `loadMore`), the search (`searchText`, `hitOf`, `snippet`, `searching`,
   `queryQ`, `matches`, `missLine`, `toggleSearch`, `clearSearch`, `searchBar`,
-  `hitRow`, `results`), the trail between issues (`open`, `back`, `dismiss`,
-  `cameFrom`, `nav`), and the drawing (`head`, `filters`, `chooser`, `tree`,
-  `row`, `detail`, `render`). No state lives outside the copy.
+  `hitRow`, `results`, `statusEscape`), the trail between issues (`open`, `back`,
+  `dismiss`, `cameFrom`, `nav`), and the drawing (`head`, `setStatus`, `filters`,
+  `chooser`, `tree`, `row`, `detail`, `render`). No state lives outside the copy.
 - `mods/kata/mod.json` — the contract, verbatim.
 - `mods/kata/icon.svg` — the tab bar's glyph, a list with two checks;
   `chevron-*.svg`, `fold.svg`, `unfold.svg`, `refresh.svg`, `branch.svg`,
@@ -526,9 +533,10 @@ Live, in this Herdr, on `work` (a personal, wired layout):
 - **The search reads the rows in hand.** No `kata search`, no second read: a
   query is a pass over the list that `kata list` already answered, so whatever
   the status filter, the branch filter and the ceiling left out, it cannot find —
-  which is what the empty state says (`Searched open issues — Closed and All
-  search the rest.`) instead of saying the task does not exist. Fetched parents
-  are not searched either; only the read's own rows are.
+  which is what the empty state says (`Searched the open issues — Closed and All
+  search the rest.`) instead of saying the task does not exist, with the
+  `Search all statuses` row under it for the one click that widens it. Fetched
+  parents are not searched either; only the read's own rows are.
 - **No keyboard, except the search field.** The panel is click-only (and hover),
   on purpose: it takes no focus handle and registers no key handlers, so it
   never takes keys from the terminal it was opened from. The one exception is

@@ -720,11 +720,12 @@ export default class Kata extends View {
 
   // What a search that found nothing looked at, which is this very list — the
   // status and the branch above it — so the answer to "is it gone?" is in the
-  // panel rather than in the reader's head.
+  // panel rather than in the reader's head. The other statuses are named because
+  // they are the one click `statusEscape` offers.
   missLine() {
     const branch = this.fellBack() ? undefined : this.chosen();
     const where = branch === undefined ? "" : branch === null ? " without a branch" : ` on ${branch}`;
-    const scope = this.status === "all" ? "issues" : `${this.status} issues`;
+    const scope = this.status === "all" ? "every issue" : `the ${this.status} issues`;
     const others = this.status === "all"
       ? []
       : STATUSES.filter((s) => s.value !== this.status).map((s) => s.label);
@@ -925,10 +926,22 @@ export default class Kata extends View {
         (_e, cx) => this.refresh(cx, true), this.loading));
   }
 
-  // Status and branch, the two questions a list of work is asked: what state,
-  // and whose branch. The status row is three buttons; the branch filter is one
-  // that shows the branch it means, because a chip per branch does not fit in a
-  // 368 px panel and a project can have a dozen.
+  // Another status is another read. The pill above and the row an empty search
+  // offers both come through here, so they cannot drift apart: another list is
+  // another tree, and the trail behind the detail view was walked through rows
+  // this read will not show.
+  setStatus(value, cx) {
+    if (this.status === value) return;
+    this.status = value;
+    this.trail = [];
+    this.selected = null;
+    this.branchOpen = false;
+    this.read(cx);
+  }
+
+  // The filter row, under the header. Status is three pills; the branch filter is
+  // one button that shows the branch it means, because a chip per branch does not
+  // fit in a 368 px panel and a project can have a dozen.
   filters(cx) {
     const t = theme();
     const segment = ({ value, label }) => {
@@ -937,16 +950,7 @@ export default class Kata extends View {
         .text_size(11.5).cursor_pointer()
         .when(on, (el) => el.bg(t.selected).text_color(t.foreground))
         .when(!on, (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover)))
-        .on_click((_e, cx) => {
-          if (this.status === value) return;
-          this.status = value;
-          // Another list is another tree: the trail behind the detail view was
-          // walked through rows this read will not show.
-          this.trail = [];
-          this.selected = null;
-          this.branchOpen = false;
-          this.read(cx);
-        })
+        .on_click((_e, cx) => this.setStatus(value, cx))
         .child(label);
     };
     const chosen = this.chosen();
@@ -1058,6 +1062,22 @@ export default class Kata extends View {
         .child(div().flex_none().text_size(10).text_color(priorityColor(t, i.priority)).child(`P${i.priority}`)));
   }
 
+  // A search that found nothing, when another status could have had it: one
+  // click reads every status and searches that instead — the same shortcut the
+  // tree's empty state offers a branch. The unmatching pill above does the same
+  // thing, but the person reading "nothing matches" is the one who should not
+  // have to work out which pill would have found it.
+  statusEscape(cx) {
+    const t = theme();
+    return h_flex().id("kata-search-all").h(24).flex_none().pr(8).gap(6).rounded(6).items_center()
+      .cursor_pointer().hover((s) => s.bg(t.hover))
+      .tooltip("Read every status — open and closed — and search that list")
+      .on_click((_e, cx) => this.setStatus("all", cx))
+      .child(svg(`${ICONS}/search.svg`).size(11).flex_none().text_color(t.dim))
+      .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted)
+        .child("Search all statuses"));
+  }
+
   // What the query found, in place of the tree: the matches that are the id or
   // the title, then the matches in the description, each group in work order. A
   // search narrows the same list the filters above it made, so the counts, the
@@ -1074,7 +1094,8 @@ export default class Kata extends View {
     return v_flex().id("kata-scroll").flex_1().min_h(0).overflow_y_scrollbar().py(4)
       .when(total === 0, (el) => el.child(v_flex().px(16).py(14).gap(5)
         .child(div().text_size(12.5).text_color(t.muted).child(`Nothing matches "${this.query.trim()}"`))
-        .child(div().text_size(11.5).text_color(t.dim).child(this.missLine()))))
+        .child(div().text_size(11.5).text_color(t.dim).child(this.missLine()))
+        .when(this.status !== "all", (el) => el.child(this.statusEscape(cx)))))
       .when(found.names.length > 0, (el) => el.child(group("in the id or title", found.names.length)))
       .children(found.names.map((i) => this.hitRow(i, "name", cx)))
       .when(found.bodies.length > 0, (el) => el.child(group("in the description", found.bodies.length)))

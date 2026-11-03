@@ -27,8 +27,8 @@ Kata  [field-guide]                       🔍 ⤢ ↻
 ▾ #jydf  Migration map: seasonal ranges go…   P1
    ● #dcrz  Sightings list: group by week, …  P2
    ● #48ec  Field marks: draw the wing-bar …  P2
-▸ #gtac  Offline packs: plan trips without…    P3 +2
 ▸ #0fsc  Accessibility: label plates for…    P2 +2
+▸ #gtac  Offline packs: plan trips without…    P3 +2
    ● #n9td  Audio notes: scrub a clip before… P4
    ● #h9p9  Range maps: winter ranges drift…
    ● #1eqr  Gallery: compare sparrows side…   P4

@@ -1,6 +1,9 @@
 {
   "place": "none",
   "title": "Kata",
-  "tab": { "title": "Kata", "icon": "mods/kata/icon.svg",
-           "show": "command -v kata >/dev/null 2>&1" }
+  "tab": {
+    "title": "Kata",
+    "icon": "mods/kata/icon.svg",
+    "show": "command -v kata >/dev/null 2>&1"
+  }
 }

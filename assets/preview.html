@@ -88,6 +88,7 @@
   }
   .tb.active { background: var(--raised); color: var(--fg); }
   .tb.active .glyph { color: var(--accent); }
+  .tb.active.push-right { margin-left: auto; }
   .body { display: flex; height: 318px; }
 
   /* the terminal: the same list, as `kata tui` shows it */
@@ -216,9 +217,7 @@
   <div class="window">
     <div class="tabbar">
       <span class="dots"><i></i><i></i><i></i></span>
-      <div class="tb"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h10M3 12h16M3 17h7"/></svg>Files</div>
-      <div class="tb"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>Changes</div>
-      <div class="tb active"><svg class="glyph" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l2 2 3-4M3 17l2 2 3-4M13 6h8M13 12h8M13 18h8"/></svg>Kata</div>
+      <div class="tb active push-right"><svg class="glyph" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l2 2 3-4M3 17l2 2 3-4M13 6h8M13 12h8M13 18h8"/></svg>Kata</div>
     </div>
     <div class="body">
       <div class="terminal">

@@ -80,7 +80,18 @@ starts on — one key, no UI:
 
 ## Install
 
-Herdr does not run a mod that lives behind a symlink, so installing is a copy:
+The button and the tab come from
+[tab-host](https://github.com/gadenbuie/herdr-mod-tab-host) — install that
+first if you don't have it (its `install.sh` copies the mod and wires every
+personal layout's tab bar):
+
+```sh
+git clone https://github.com/gadenbuie/herdr-mod-tab-host.git
+cd herdr-mod-tab-host && ./install.sh
+```
+
+Then this mod. Herdr does not run a mod that lives behind a symlink, so
+installing is a copy:
 
 ```sh
 git clone https://github.com/gadenbuie/herdr-mod-kata.git
@@ -89,8 +100,12 @@ rsync -rlpt --delete mods/kata/ ~/.config/herdr-app/mods/kata/
 herdr-app check ~/.config/herdr-app/mods/kata
 ```
 
-tab-host watches `mods/`, so the button and the panel appear the moment the
-copy lands, and both go when the folder does.
+tab-host watches `mods/`, so the **Kata** button appears at the right end of
+the tab bar the moment the copy lands, and both the button and the panel go
+when the folder does. With tab-host, using it is one click: the button opens
+the side panel on the Kata tab, the same button (or the key below) puts it
+away — and after the first click the panel keeps itself fresh in the
+background, so reopening it shows a list that is already up to date.
 
 ## Without tab-host
 

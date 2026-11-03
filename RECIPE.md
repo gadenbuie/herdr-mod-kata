@@ -24,13 +24,14 @@ fill, a 1 px `border`, at 13 px in `foreground`:
 Kata  [field-guide]                       🔍 ⤢ ↻
 [Open] [Closed] [All]          [ All branches ▾ ]
 ────────────────────────────────────────────────
-▸ #h21a  Migration map: seasonal ranges go…    P1 +4
-   ● #m02  Sightings list: group by week, n…  P2
-   ● #m03  Field marks: draw the wing-bar o…  P2
-▾ #p10  Offline packs: plan trips without a…  P3
-   ● #p11  Offline packs: download counties…  P3
-   ● #p12  Offline packs: delete packs the…   P4
-▸ #g08  Accessibility: label plates for sc…  P2 +2
+▾ #jydf  Migration map: seasonal ranges go…   P1
+   ● #dcrz  Sightings list: group by week, …  P2
+   ● #48ec  Field marks: draw the wing-bar …  P2
+▸ #gtac  Offline packs: plan trips without…    P3 +2
+▸ #0fsc  Accessibility: label plates for…    P2 +2
+   ● #n9td  Audio notes: scrub a clip before… P4
+   ● #h9p9  Range maps: winter ranges drift…
+   ● #1eqr  Gallery: compare sparrows side…   P4
 ```
 
 **Header**, 42 px, 14 px side padding, a 1 px bottom border:
@@ -134,9 +135,9 @@ to search.
 
 - **What it matches**: a substring, case-insensitive, anywhere in an issue's
   id, title, or body — the three strings `kata list --json` already carries,
-  so a search is one pass over the rows in hand and never a read. `nfe7` and
-  `#nfe7` both name `#nfe7`, and a query with a `#` inside it may name the
-  qualified id (`paparazzi#nfe7`). No fuzzy matching, no ranking by distance:
+  so a search is one pass over the rows in hand and never a read. `48ec` and
+  `#48ec` both name `#48ec`, and a query with a `#` inside it may name the
+  qualified id (`field-guide#48ec`). No fuzzy matching, no ranking by distance:
   a typo finds nothing.
 - **The id and the title come first.** Results are drawn in two groups, `N in
   the id or title` and then `N in the description`, so the rows the query
@@ -160,7 +161,7 @@ to search.
   branch filters made rather than reaching around them, so the read stays one
   read and the counts stay the filters' own. A search that finds nothing says
   what it looked at — `Searched the open issues — Closed and All search the
-  rest.`, or `Searched every issue on feat/recall.` — instead of declaring
+  rest.`, or `Searched every issue on feat/migration-map.` — instead of declaring
   the task gone, and while the status is not **All** it offers the one click
   that widens the search: a `Search all statuses` row, a magnifier and 11.5 px
   `muted`, hovered like a row of the tree. It is the same shortcut the tree's
@@ -204,7 +205,7 @@ thing.
   row**: same 26 px row, same fold chevron, `muted` title, and a tooltip saying
   why it is there. Context rows are not counted as tasks of the read — the
   branch counts and the read count are the filter's own — so the tree shows
-  `#p10 Offline packs: plan trips without a signal +5` above the five tasks
+  `#gtac Offline packs: plan trips without a signal +2` above the two tasks
   that belong to it without pretending the parent is on that branch. A parent
   whose own parent is out of the read pulls that one in too, so the chain to
   the top is whole. Two tasks each claiming the other as parent — the data can
@@ -232,7 +233,7 @@ row with the two ways out of it:
 - **`‹ #ref title`** — back one step along the trail, naming the issue it
   returns to. A chain of refs is easy to follow and hard to remember, so back
   says where it goes, and its tooltip adds how many steps are behind that one
-  (`Back to #m02 — Sightings list: group by week (1 more behind it)`). On the
+  (`Back to #dcrz — Sightings list: group by week (1 more behind it)`). On the
   first issue opened from the tree there is nothing behind it, so the same
   button reads `‹ All issues` and shows the tree: a "back" that goes where
   "all issues" goes is one button, not two.
@@ -552,7 +553,7 @@ Nothing to wire, no layout to edit: the wiring is tab-host's, and it belongs to
 it.
 
 Then, live in Herdr, against a scratch kata project (a throwaway git repo with
-`kata init` and made-up issues — a parent with five tasks, one blocked task,
+`kata init` and made-up issues — a parent with two tasks, one blocked task,
 one closed task, tasks on two branches):
 
 - **The tree.** The parent folds and unfolds, `+N` counts every task under it,
@@ -584,8 +585,8 @@ one closed task, tasks on two branches):
   any depth.
 - **The search.** The magnifier opens the field and puts the keyboard on it; a
   word from a title draws `N in the id or title` above `N in the description`,
-  the description hits each carrying the line that matched; `6ark` finds by id
-  and `#6ark` the same, and a query is case-insensitive either way. A status
+  the description hits each carrying the line that matched; `h9p9` finds by id
+  and `#h9p9` the same, and a query is case-insensitive either way. A status
   pill is a different read, not a different search: **Closed** with the same
   query searches the closed list. A query that matches nothing says what it
   searched and offers the `Search all statuses` row — gone on **All**. The `×`

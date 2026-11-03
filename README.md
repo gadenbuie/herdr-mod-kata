@@ -1,6 +1,6 @@
 # Kata
 
-The space's kata issues as a read-only tree in the
+The space's [kata](https://katatracker.com) issues as a read-only tree in the
 [Herdr](https://herdr.dev) side panel (`herdr-app`; written against 0.1.12): a
 **Kata** button beside Files and Changes opens a tab that shows the open work
 of the project you are in — which task belongs under which, a status filter,
@@ -46,9 +46,9 @@ manifest is the whole contract.
 
 - **The tree**, refreshed every 15 s (`kata tui`'s own pace) and on the ↻
   button: open before closed, then priority, then what moved last. A parent
-  folds, its `+N` counts every task under it, an open task that blocks open
-  work carries an amber marker, and a closed one a check in the theme's `done`
-  color.
+  folds, its `+N` counts every task under it, an open task blocked by another
+  open one carries an amber marker, and a closed one a check in the theme's
+  `done` color.
 - **The branch filter, on the checkout's side.** On the repo's own branch
   every task shows; on any other branch — a worktree, a topic checkout — the
   tasks recorded on that branch show, and a default that matches nothing falls
@@ -80,7 +80,10 @@ starts on — one key, no UI:
 
 ## Install
 
-The button and the tab come from
+The panel reads [kata](https://katatracker.com) — the local-first issue
+tracker for coding agents — so install it where you want the button
+(`brew install kata` on macOS; the site has Linux and Windows installers).
+The button and the tab themselves come from
 [tab-host](https://github.com/gadenbuie/herdr-mod-tab-host) — install that
 first if you don't have it (its `install.sh` copies the mod and wires every
 personal layout's tab bar):

@@ -3,13 +3,15 @@
 A Kata tab in the tab bar: a **Kata** button beside Files and Changes opens a
 tab in the side panel that shows the space's kata issues as a tree — the work
 that is open, which task belongs under which, and a detail view per issue — with
-a status filter, a branch filter, and foldable parents.
+a status filter, a branch filter, a search over ids, titles and bodies, and
+foldable parents.
 
 Read-only by design: it writes nothing — no claim, no close, no comment, no
 edit. Its reads are one `kata list` per refresh, plus a `kata show` for each
-parent that list did not carry, so a task never loses its place in the tree. It
-is a window onto the same list `kata tui` shows, sized the way a 368 px side
-panel can take it.
+parent that list did not carry, so a task never loses its place in the tree. A
+search costs no read at all: it is a pass over the rows already in hand. It is a
+window onto the same list `kata tui` shows, sized the way a 368 px side panel
+can take it.
 
 The branch filter follows the checkout. A space on the repo's own branch
 (`main`, or whatever `origin/HEAD` says) is not about one branch, so every task
@@ -21,7 +23,7 @@ branch filter wins over that default for that checkout, and
 ![Kata in the tab bar](preview.png)
 
 ```
-Kata  [paparazzi]                        ⤢ ↻
+Kata  [paparazzi]                     🔍 ⤢ ↻
 [Open] [Closed] [All]        [ All branches ▾ ]
 ────────────────────────────────────────────────
 ▾ #jfqz  Recording robustness defects          P3
@@ -161,11 +163,13 @@ layout, the width Files and Changes get — rounded 10, `background` fill, a 1 p
   fully rounded, 6 px side padding, at most 170 px, ellipsis). `muted` when kata
   itself would find the project; `dim` when the name was guessed from the repo,
   with a tooltip that says which.
-- Two 24 px icon buttons at the right, 14 px glyphs in `muted`, `foreground` on
-  `hover`, each with a tooltip: **fold/unfold all** (one button for both — with
-  anything folded it unfolds; with everything open it folds every parent) and
-  **↻**, which turns while a read is in flight (`.spin(900)`, drawn by GPUI, no
-  timer of ours).
+- Three 24 px icon buttons at the right, 14 px glyphs in `muted`, `foreground` on
+  `hover`, each with a tooltip: **search** (a magnifier; filled `selected` while
+  its field is open, and gone behind an open issue or over a note, where there is
+  no list to search), **fold/unfold all** (one button for both — with anything
+  folded it unfolds; with everything open it folds every parent; it goes while a
+  search has flattened the tree into results), and **↻**, which turns while a
+  read is in flight (`.spin(900)`, drawn by GPUI, no timer of ours).
 
 **Filter row**, 34 px, a 1 px bottom border:
 
@@ -225,6 +229,56 @@ Branches come from each issue's `work.branch` metadata — the key kata's own
 examples use — and hand-quoted values (`"feat/x"`) count as the same branch as
 the unquoted ones. A branch the next read no longer has falls back to all
 branches rather than to an empty tree.
+
+### The search
+
+The magnifier in the header opens a **search field** under the filter row: 34 px,
+the same 1 px bottom border as the rows above it, a 12 px magnifier glyph that
+turns `accent` while the field holds the keyboard, the input at 11.5 px, and a
+`×` at the right that empties it. Opening the field asks kata for nothing and
+closing it puts the tree back as it was; an empty field is the tree, so emptying
+it and closing it are the same picture.
+
+![The search open, over the same list](preview-search.png)
+
+- **What it matches**: a substring, case-insensitive, anywhere in an issue's
+  id, title, or body — the three strings `kata list --json` already carries, so
+  a search is one pass over the rows in hand and never a read. `nfe7` and
+  `#nfe7` both name `#nfe7`, and a query with a `#` inside it may name the
+  qualified id (`paparazzi#nfe7`). No fuzzy matching, no ranking by distance: a
+  typo finds nothing.
+- **The id and the title come first.** Results are drawn in two groups, `N in
+  the id or title` and then `N in the description`, so the rows the query *names*
+  sit above the rows it is merely written in. Within a group the tree's own work
+  order holds — open before closed, then priority, then what moved last — because
+  a search is still a list of work to do rather than a list of scores. An issue
+  whose title matches is in the first group even when its body matches too.
+- **A description hit says why it is there**: one dim line under the title, the
+  words around the match lifted out of the body with its whitespace collapsed
+  and both ends ellipsized to a single line. A page of markdown answers "why is
+  this here?" with a paragraph; the line that matched answers it with the words
+  that matched.
+- **Results are a list, not a tree.** No indent, no fold chevron, no context
+  parent: where an issue sits is not what the person searched for. A row is an
+  ordinary row otherwise — marker, `#ref`, title, priority — and still opens the
+  issue. The fold/unfold button goes while results are drawn, since a flat list
+  has nothing folded, and comes back with the tree.
+- **The filters above still hold.** A search narrows the list the status and
+  branch filters made rather than reaching around them, so the read stays one
+  read and the counts stay the filters' own. A search that finds nothing says
+  what it looked at — `Searched open issues — Closed and All search the rest.`,
+  or `Searched open issues on feat/recall — …` — instead of declaring the task
+  gone. A read that stopped at its ceiling keeps its `N of M` line and its
+  **Load more** row under the results.
+- **Opening it takes the keyboard, on a click.** The field is the one thing in
+  this panel that ever holds it (see *How it behaves*); the `×` empties it and
+  keeps the field and its focus, so the next search is one keystroke away, and
+  the magnifier closes it.
+
+A query belongs to the place like the rest of the panel: another space or `cd`
+closes the field and drops the query, while a re-read of the same place — the
+15 s timer, ↻ — keeps both, because the person is still looking for the same
+thing.
 
 **The tree**, one scroll area, 26 px rows, 6 px side margins, rounded 6, `hover`
 fill:
@@ -337,9 +391,14 @@ down — is the same note with kata's own message, and the ↻ above it retries.
   missing parent. Adding writes would need a claim flow, an actor, and a
   confirmation for the destructive ones; that is a different mod, and a person
   can do all of it from `kata tui` in a terminal.
-- **It never steals the keyboard.** The panel takes no focus handle: no key
-  down handlers, no `focusable`, so clicking it does not pull keys out of the
-  terminal. Everything is a click.
+- **It takes the keyboard in one place.** The panel itself takes no focus
+  handle — no key handlers, no `focusable` — so clicking a row, a filter or the
+  tree does not pull keys out of the terminal, and everything but the search is
+  a click. The search field is the deliberate exception: the click on the
+  magnifier moves the keyboard onto the input, because a search box you cannot
+  type into is not one, and clicking a row, the tree or the terminal takes it
+  back. There are still no key handlers of ours, which is why the `×` empties a
+  search and the magnifier closes it.
 
 ## Installing
 
@@ -399,6 +458,19 @@ Live, in this Herdr, on `work` (a personal, wired layout):
   right; `‹` walks back one issue at a time, naming each, and returns to `‹ All
   issues` at the start of the trail, while `All issues` reaches the tree in one
   click from any depth.
+- **The search.** The magnifier opens the field under the filters and puts the
+  keyboard on it; `test` draws `3 in the id or title` (`#r358`, `#9wv7`, `#f5ps`,
+  each matched in its title) above `1 in the description` (`#6ark`, drawn with
+  the line of its body that matched under the title). `6ark` finds that one by
+  id, `#6ark` the same, and a query is case-insensitive either way. **Closed**
+  with the same query searches the closed list instead — nine tasks, `9 in the
+  description`, green checks and `muted` titles — because a status pill is a
+  different read, not a different search. `zzz nope` says `Nothing matches
+  "zzz nope"` and `Searched open issues — Closed and All search the rest.` The
+  `×` empties the field and keeps it, the magnifier closes it and the tree comes
+  back with its folds — the fold button is gone while results are drawn, back
+  with the tree — and a row still opens its issue, with `‹` returning to the
+  results.
 - **A space with no kata project** (`~/play/gadenbuie/herdr-mod-plannotator`)
   shows the placeholder naming the folder and `kata init --project
   herdr-mod-plannotator`.
@@ -415,14 +487,18 @@ Live, in this Herdr, on `work` (a personal, wired layout):
   (`filtered`, `branches`, `rows`, `known`, `kids`), the parents the list left
   out (`showIssue`, `relink`, `missingParents`, `gather`, `prune`,
   `needParents`), the read's ceiling (`bigger`, `footNote`, `moreButton`,
-  `loadMore`), the trail between issues (`open`, `back`, `dismiss`,
+  `loadMore`), the search (`searchText`, `hitOf`, `snippet`, `searching`,
+  `queryQ`, `matches`, `missLine`, `toggleSearch`, `clearSearch`, `searchBar`,
+  `hitRow`, `results`), the trail between issues (`open`, `back`, `dismiss`,
   `cameFrom`, `nav`), and the drawing (`head`, `filters`, `chooser`, `tree`,
   `row`, `detail`, `render`). No state lives outside the copy.
 - `mods/kata/mod.json` — the contract, verbatim.
 - `mods/kata/icon.svg` — the tab bar's glyph, a list with two checks;
   `chevron-*.svg`, `fold.svg`, `unfold.svg`, `refresh.svg`, `branch.svg`,
-  `check-circle.svg` are the panel's own icons, all one-color so they tint with
-  the theme.
+  `search.svg`, `check-circle.svg` are the panel's own icons, all one-color so
+  they tint with the theme.
+- `preview.png` (the window) and `preview-search.png` (the panel, 368 px, search
+  open) — what this document's pictures are of.
 - `mods/kata/gpui-kit.d.ts`, `jsconfig.json` — the app's own type file (rewritten
   by Herdr on every start; this copy is the editor's) and the settings that make
   it resolve `gpui-kit`/`gpui-base`/`herdr` without turning the runtime's shape
@@ -447,7 +523,18 @@ Live, in this Herdr, on `work` (a personal, wired layout):
   re-asked on the 15 s timer, so its title and status are the ones `kata show`
   gave, until it turns up in the list itself or the panel is asked again with
   ↻ (or the space moves), which forgets the fetched copies and asks again.
-- **No keyboard.** The panel is click-only (and hover), on purpose: it never
-  takes focus from the terminal it was opened from.
+- **The search reads the rows in hand.** No `kata search`, no second read: a
+  query is a pass over the list that `kata list` already answered, so whatever
+  the status filter, the branch filter and the ceiling left out, it cannot find —
+  which is what the empty state says (`Searched open issues — Closed and All
+  search the rest.`) instead of saying the task does not exist. Fetched parents
+  are not searched either; only the read's own rows are.
+- **No keyboard, except the search field.** The panel is click-only (and hover),
+  on purpose: it takes no focus handle and registers no key handlers, so it
+  never takes keys from the terminal it was opened from. The one exception is
+  the search input, which takes the keyboard when the magnifier is clicked — a
+  field you cannot type into is not a field — and gives it back to the terminal
+  when anything else is clicked. Nothing about it is bound to a key: no Escape,
+  no ⌘F.
 - **One list, no comments.** The detail view is the issue, not its thread;
   comments are `kata show`'s, and this mod does not ask.

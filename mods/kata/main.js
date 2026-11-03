@@ -10,10 +10,11 @@
 //
 // It reads `kata list --json` for the project the space is in and shows what a
 // terminal would show with `kata tui`: the open work, which task belongs under
-// which, and every field the list carries. Status and branch are filters; a row
-// opens the issue's own details, out of the same read — nothing here posts,
-// claims, closes or comments. One list per refresh, plus a `kata show` for each
-// parent that list did not carry, so a task never loses its place in the tree.
+// which, and every field the list carries. Status and branch are filters, and a
+// search narrows the same list by id, title or body; a row opens the issue's own
+// details, out of the same read — nothing here posts, claims, closes or
+// comments. One list per refresh, plus a `kata show` for each parent that list
+// did not carry, so a task never loses its place in the tree.
 //
 // The branch filter follows the checkout. A space on the repo's own branch
 // (`main`, or whatever origin/HEAD says) is not about one branch, so every task
@@ -31,7 +32,7 @@
 //   3. nothing: a space with no kata project says so, and says what to run.
 
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, TextView } from "gpui-base";
+import { v_flex, h_flex, Input, InputState, TextView } from "gpui-base";
 import { spaces, focused, panes, exec, theme, readTextFile, appHome } from "herdr";
 
 const ICONS = "mods/kata";
@@ -319,6 +320,46 @@ function priorityColor(t, p) {
   return t.dim;
 }
 
+// ---- the search ----
+
+// The strings a search reads, lowercased once per issue and kept on it: a
+// keystroke must not lower a thousand descriptions again. An issue is as
+// long-lived as the read it arrived in, which is as long as this cache is good.
+function searchText(i) {
+  return (i.searchText ??= {
+    ref: i.ref.toLowerCase(),
+    qualified: `${i.project ? `${i.project}#` : ""}${i.ref}`.toLowerCase(),
+    title: i.title.toLowerCase(),
+    body: i.body.toLowerCase(),
+  });
+}
+
+// Where a query is in an issue, when it is anywhere: "name" for the id or the
+// title — what an issue is called, so the issue the person means — and "body"
+// for the description, which names the work rather than the task and ranks
+// below it. Substring, case-insensitive, and nothing cleverer: `q` arrives
+// trimmed and lowercased. A query may spell the id either way — `nfe7`, `#nfe7`
+// — and one with a `#` in it may name the qualified id (`paparazzi#nfe7`).
+function hitOf(i, q) {
+  const text = searchText(i);
+  const ref = q.replace(/^#/, "");
+  if ((ref && text.ref.includes(ref)) || (q.includes("#") && text.qualified.includes(q))
+    || text.title.includes(q)) return "name";
+  return text.body.includes(q) ? "body" : null;
+}
+
+// The words around a match, for a row that is in the list because of its
+// description: a page of markdown answers "why is this here?" with a paragraph,
+// and one line around the match answers it with the words that matched.
+function snippet(body, q, width = 84) {
+  const text = String(body).replace(/\s+/g, " ").trim();
+  const at = text.toLowerCase().indexOf(q);
+  if (at < 0) return "";
+  const from = Math.max(0, at - 24);
+  const cut = text.slice(from, from + width).trim();
+  return `${from > 0 ? "…" : ""}${cut}${from + width < text.length ? "…" : ""}`;
+}
+
 export default class Kata extends View {
   init(_props, cx) {
     this.origin = null;      // { folder, on }: the place this panel reads
@@ -341,6 +382,23 @@ export default class Kata extends View {
     this.mode = "auto";
     this.trunk = null;
     this.branchOpen = false;
+    // The search: a query over the rows this read carries, drawn in place of the
+    // tree (`searching`) under a field of its own (`searchBar`). An open field
+    // with nothing typed is the tree, unchanged, so closing the search and
+    // emptying it are the same picture. The field is the one thing in this panel
+    // that ever holds the keyboard, and only when a click opens it.
+    this.searchOpen = false;
+    this.query = "";
+    this.searchTyping = false;
+    this.searchInput = InputState.new({ placeholder: "Search ids, titles, bodies…" });
+    this.searchInput.on("change", (_e, cx) => {
+      const q = this.searchInput.value();
+      if (q === this.query) return;
+      this.query = q;
+      cx.notify();
+    });
+    this.searchInput.on("focus", (_e, cx) => { this.searchTyping = true; cx.notify(); });
+    this.searchInput.on("blur", (_e, cx) => { this.searchTyping = false; cx.notify(); });
     this.collapsed = new Set();
     this.selected = null;    // the uid the detail view shows
     // The issues the detail view came through, oldest first, the one before
@@ -391,6 +449,10 @@ export default class Kata extends View {
       this.folder = at.folder;
       this.issues = [];
       this.branchOpen = false;
+      // Another project's list is another search: the field closes and the query
+      // goes with it. A re-read of the same place (↻, the 15 s timer) keeps
+      // them, because the person is still looking for the same thing.
+      if (moved) this.clearSearch();
       this.collapsed = new Set();
       this.selected = null;
       this.trail = [];
@@ -602,6 +664,73 @@ export default class Kata extends View {
     return this.issues.filter((i) => i.branch === branch);
   }
 
+  // ---- the search ----
+
+  // Whether the query is narrowing the list: the field is open and has words in
+  // it. An open field with nothing typed is the tree, unchanged.
+  searching() {
+    return this.searchOpen && this.query.trim().length > 0;
+  }
+
+  // What the query says, as a search reads it.
+  queryQ() {
+    return this.query.trim().toLowerCase();
+  }
+
+  // The field closes and its query goes with it — what a moved place and a
+  // second click on the button both do. The value is set only when there is one
+  // to empty, so the input's own `change` is not fired for nothing.
+  clearSearch() {
+    this.searchOpen = false;
+    if (this.query) {
+      this.query = "";
+      this.searchInput.set_value("");
+    }
+  }
+
+  // The field is a view of the list, not a read: opening it asks kata for
+  // nothing, and closing it puts back the tree exactly as it was. Opening it
+  // also moves the keyboard onto the field — the one place in this panel that
+  // ever holds it — because a search box you have to click twice is one nobody
+  // uses; clicking a row, or the terminal, takes the keyboard back.
+  toggleSearch(cx) {
+    this.branchOpen = false;
+    const open = !this.searchOpen;
+    if (!open) this.clearSearch();
+    else this.searchOpen = true;
+    cx.notify();
+    if (open) this.searchInput.focus();
+  }
+
+  // The issues the query finds, in the order the panel ranks them: the ones it
+  // names in their id or title first, then the ones whose description it is in.
+  // Both groups keep the tree's own work order — open before closed, then
+  // priority, then what moved last — because a search is still a list of work to
+  // do rather than a list of scores.
+  matches(q) {
+    const names = [];
+    const bodies = [];
+    for (const i of this.filtered()) {
+      const hit = hitOf(i, q);
+      if (hit === "name") names.push(i);
+      else if (hit === "body") bodies.push(i);
+    }
+    return { names: names.sort(order), bodies: bodies.sort(order) };
+  }
+
+  // What a search that found nothing looked at, which is this very list — the
+  // status and the branch above it — so the answer to "is it gone?" is in the
+  // panel rather than in the reader's head.
+  missLine() {
+    const branch = this.fellBack() ? undefined : this.chosen();
+    const where = branch === undefined ? "" : branch === null ? " without a branch" : ` on ${branch}`;
+    const scope = this.status === "all" ? "issues" : `${this.status} issues`;
+    const others = this.status === "all"
+      ? []
+      : STATUSES.filter((s) => s.value !== this.status).map((s) => s.label);
+    return `Searched ${scope}${where}${others.length ? ` — ${others.join(" and ")} search the rest` : ""}.`;
+  }
+
   branches() {
     const counts = new Map();
     for (const i of this.issues) {
@@ -745,11 +874,13 @@ export default class Kata extends View {
 
   // ---- pieces ----
 
-  iconButton(id, icon, tip, action, spin = false) {
+  iconButton(id, icon, tip, action, spin = false, on = false) {
     const t = theme();
     const glyph = svg(`${ICONS}/${icon}.svg`).size(14);
     return div().id(id).size(24).flex_none().flex().items_center().justify_center().rounded(6)
-      .text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .text_color(on ? t.foreground : t.muted)
+      .when(on, (el) => el.bg(t.selected))
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
       .tooltip(tip).cursor_pointer().on_click(action)
       // A read in flight turns the icon: drawn by GPUI, so it costs no timer.
       .child(spin ? glyph.spin(900) : glyph);
@@ -769,6 +900,11 @@ export default class Kata extends View {
     const t = theme();
     const name = this.resolved?.name ?? null;
     const guessed = this.resolved && this.resolved.bound === false;
+    // Search and folding are the list's, so they are drawn where there is a list
+    // to draw: not over a note, not behind an open issue (which takes the panel),
+    // and no folding while a search has flattened the tree into results.
+    const list = this.ready && !this.missing && this.issues.length > 0 && !this.selected;
+    const foldable = list && !this.searching();
     return h_flex().id("kata-head").h(42).flex_none().px(14).gap(8).items_center()
       .border_b(1).border_color(t.border)
       .child(div().font_semibold().child("Kata"))
@@ -777,9 +913,13 @@ export default class Kata extends View {
           .text_size(10.5).max_w(170).truncate().tooltip(guessed ? `No kata binding here: the git repo's name, ${name}` : "The bound kata project")
           .child(name)))
       .child(div().flex_1())
-      .when(this.collapsed.size > 0, (el) => el
+      .when(list, (el) => el
+        .child(this.iconButton("kata-search", "search",
+          this.searchOpen ? "Close the search" : "Search the ids, titles and bodies in this list",
+          (_e, cx) => this.toggleSearch(cx), false, this.searchOpen)))
+      .when(foldable && this.collapsed.size > 0, (el) => el
         .child(this.iconButton("kata-fold", "unfold", "Expand all", (_e, cx) => this.toggleAll(cx))))
-      .when(this.collapsed.size === 0, (el) => el
+      .when(foldable && this.collapsed.size === 0, (el) => el
         .child(this.iconButton("kata-fold", "fold", "Collapse all", (_e, cx) => this.toggleAll(cx))))
       .child(this.iconButton("kata-refresh", "refresh", "Read the list again",
         (_e, cx) => this.refresh(cx, true), this.loading));
@@ -863,6 +1003,85 @@ export default class Kata extends View {
       .children(branches.map(([name, count], i) =>
         row(`kata-b-${i}`, name, name, count, chosen === name)))
       .when(loose > 0, (el) => el.child(row("kata-b-none", null, "No branch", loose, chosen === null)));
+  }
+
+  // The field, under the filters: a magnifier that answers to the keyboard, the
+  // input, and the × that empties it. The × is the one way to clear without the
+  // keyboard — this panel registers no key handlers, so there is no Escape here
+  // — and emptying the field puts the tree back.
+  searchBar(cx) {
+    const t = theme();
+    return h_flex().id("kata-search").h(34).flex_none().px(12).gap(6).items_center()
+      .border_b(1).border_color(t.border)
+      .child(svg(`${ICONS}/search.svg`).size(12).flex_none()
+        .text_color(this.searchTyping ? t.accent : t.dim))
+      .child(div().flex_1().min_w(0).h_full().flex().items_center()
+        .child(Input.new(this.searchInput).h_full().text_size(11.5).text_color(t.foreground)))
+      .when(this.query.length > 0, (el) => el
+        .child(div().id("kata-search-clear").size(18).flex_none().flex().items_center().justify_center()
+          .rounded(4).text_size(13).text_color(t.dim).cursor_pointer()
+          .hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .tooltip("Empty the search")
+          .on_click((_e, cx) => {
+            this.query = "";
+            this.searchInput.set_value("");
+            this.searchInput.focus();
+            cx.notify();
+          })
+          .child("×")));
+  }
+
+  // A row of the results: the same marker, ref, title and priority as a tree
+  // row, and under a description hit the line of the description that matched —
+  // without it a result that matched no visible word asks why it is here. No
+  // chevron and no indent: results are a list, not a tree, and where an issue
+  // sits is not what the person searched for.
+  hitRow(i, hit, cx) {
+    const t = theme();
+    const blocked = i.blockedBy.some((b) => b.status === "open");
+    const hint = hit === "body" ? snippet(i.body, this.queryQ()) : "";
+    return h_flex().id(`kata-hit-${i.uid}`).flex_none().mx(6).px(8).py(4).gap(6).rounded(6)
+      .items_center().cursor_pointer().hover((s) => s.bg(t.hover))
+      .on_click((_e, cx) => this.open(i.uid, cx))
+      .child(i.closed
+        ? svg(`${ICONS}/check-circle.svg`).size(11).flex_none().text_color(t.done)
+        : div().w(11).flex_none().flex().items_center().justify_center()
+          .child(div().size(6).rounded(99).bg(blocked ? t.ansi3 : t.dim)
+            .when(blocked, (el) => el.tooltip("Blocked by an open issue"))))
+      .child(div().flex_none().text_size(11).text_color(t.dim).child(`#${i.ref}`))
+      .child(v_flex().flex_1().min_w(0).gap(1)
+        .child(div().truncate().text_size(12).text_color(i.closed ? t.muted : t.foreground)
+          .child(i.title))
+        .when(Boolean(hint), (el) => el
+          .child(div().truncate().text_size(10.5).text_color(t.dim).child(hint))))
+      .when(i.priority != null, (el) => el
+        .child(div().flex_none().text_size(10).text_color(priorityColor(t, i.priority)).child(`P${i.priority}`)));
+  }
+
+  // What the query found, in place of the tree: the matches that are the id or
+  // the title, then the matches in the description, each group in work order. A
+  // search narrows the same list the filters above it made, so the counts, the
+  // empty state and the ceiling note are the same ones the tree would say — the
+  // task the person is hunting is not declared gone, it is declared filtered.
+  results(cx) {
+    const t = theme();
+    const q = this.queryQ();
+    const found = this.matches(q);
+    const total = found.names.length + found.bodies.length;
+    const group = (label, count) => div().px(16).pt(6).pb(2).text_size(10).text_color(t.dim)
+      .child(`${count} ${label}`);
+    const note = this.footNote();
+    return v_flex().id("kata-scroll").flex_1().min_h(0).overflow_y_scrollbar().py(4)
+      .when(total === 0, (el) => el.child(v_flex().px(16).py(14).gap(5)
+        .child(div().text_size(12.5).text_color(t.muted).child(`Nothing matches "${this.query.trim()}"`))
+        .child(div().text_size(11.5).text_color(t.dim).child(this.missLine()))))
+      .when(found.names.length > 0, (el) => el.child(group("in the id or title", found.names.length)))
+      .children(found.names.map((i) => this.hitRow(i, "name", cx)))
+      .when(found.bodies.length > 0, (el) => el.child(group("in the description", found.bodies.length)))
+      .children(found.bodies.map((i) => this.hitRow(i, "body", cx)))
+      .when(Boolean(note), (el) => el
+        .child(div().px(16).pt(4).text_size(10.5).text_color(t.dim).child(note)))
+      .when(this.truncated, (el) => el.child(this.moreButton(cx)));
   }
 
   row(entry, cx) {
@@ -1121,6 +1340,7 @@ export default class Kata extends View {
     return root
       .child(this.head(cx))
       .child(this.filters(cx))
+      .when(this.searchOpen, (el) => el.child(this.searchBar(cx)))
       // The default filter landed on a branch with nothing on it: say so, so an
       // unexpected list is not read as an empty project.
       .when(this.fellBack(), (el) => el
@@ -1132,6 +1352,8 @@ export default class Kata extends View {
         .child(div().px(14).pt(6).text_size(11).text_color(t.blocked).truncate()
           .tooltip(this.failure.message).child(this.failure.message)))
       .when(!this.ready, (el) => el.child(this.note("Reading kata…", `Asking for ${this.status} issues.`, null)))
-      .when(this.ready, (el) => el.child(this.branchOpen ? this.chooser(cx) : this.tree(cx)));
+      .when(this.ready, (el) => el.child(this.branchOpen
+        ? this.chooser(cx)
+        : this.searching() ? this.results(cx) : this.tree(cx)));
   }
 }

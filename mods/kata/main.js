@@ -931,10 +931,12 @@ export default class Kata extends View {
         .child(this.status === "closed" ? "Nothing closed yet" : "No issues here"))
       .child(div().text_size(11.5).text_color(t.dim).child(this.emptyLine()))
       .when(Boolean(escape), (el) => el.child(escape));
-    // What the tree is not showing, under it: a filter hiding rows of the read,
-    // or a read that stopped at its ceiling. The count says the tree is not the
-    // whole project, so nobody hunts for a task that is not drawn, and a capped
-    // list carries the one click that draws more.
+    // What the read is not showing, under it — and only that. A branch filter
+    // hiding the other branches' tasks is hiding them on purpose, with every
+    // task of the shown branch drawn, so a count of both populations only asks
+    // where the rest went. A read that stopped at its ceiling is the one case
+    // where a task of *this* branch may be missing, and that is what the line
+    // and the button under it say.
     const note = this.footNote();
     return v_flex().id("kata-scroll").flex_1().min_h(0).overflow_y_scrollbar().py(4)
       .when(rows.length === 0 && !this.loading, (el) => el.child(empty))
@@ -944,18 +946,21 @@ export default class Kata extends View {
       .when(this.truncated, (el) => el.child(this.moreButton(cx)));
   }
 
-  // What the tree is not showing, in one line. Two omissions, and they are not
-  // the same: a branch filter hiding rows of the read, and a read that stopped
-  // at its ceiling with the rest of the project still in kata.
+  // Nothing is hidden, unless the read stopped at its ceiling: then the tasks
+  // of the shown branch are drawn only as far as the ceiling reached, and the
+  // line says so — about this branch, because that is the only thing the person
+  // can do something about here.
   footNote() {
-    const total = this.total ?? this.issues.length;
-    const here = this.filtered().length;
-    if (this.truncated) {
-      const bits = [`${this.issues.length} of ${total} in this project`];
-      if (here !== this.issues.length) bits.push(`${here} on this branch filter`);
-      return bits.join(" — ");
-    }
-    return here === total ? "" : `${here} of ${total} on this branch filter`;
+    if (!this.truncated) return "";
+    const total = this.total;
+    const read = total && total > this.issues.length
+      ? `${this.issues.length} of ${total} in this project`
+      : `More than the ${this.issues.length} rows read`;
+    // A filter that fell back to every branch is not filtering, so it is not
+    // something the unread rows could be hidden behind.
+    const branch = this.fellBack() ? undefined : this.chosen();
+    if (branch === undefined) return read;
+    return `${read} — more may be ${branch === null ? "without a branch" : `on ${branch}`}`;
   }
 
   // The read stopped at its ceiling. One click reads the list again with a

@@ -247,19 +247,23 @@ fill:
   the read, or out of the branch, the parent comes back as a **context row**:
   same 26 px row, same fold chevron, `muted` title, and a tooltip saying why it
   is there. Context rows are not counted as tasks of the read — the branch
-  counts and the line under the tree are the filter's own — so the tree shows
-  `#54b1 Video-editor ideas: research backlog +5` above the five tasks that
-  belong to it without pretending the parent is on that branch. A parent whose
-  own parent is out of the read pulls that one in too, so the chain to the top
-  is whole. A task whose parent cannot be had at all is the one case where it is
-  drawn as a root.
-- With a branch filter hiding some of the read, a line under the tree says `N of
-  M on this branch filter`, so nothing looks missing without a reason.
-- When the read stopped at its ceiling, the same line says `1000 of 1200 in this
-  project`, and a **Load more** row sits under it: one click re-reads the list at
-  the next ceiling (`bigger`). The rows on screen stay while it runs, so the
-  click is safe twice, and the line's tooltip says what the next read will ask
-  for.
+  counts and the read count are the filter's own — so the tree shows `#54b1
+  Video-editor ideas: research backlog +5` above the five tasks that belong to
+  it without pretending the parent is on that branch. A parent whose own parent
+  is out of the read pulls that one in too, so the chain to the top is whole. A
+  task whose parent cannot be had at all is the one case where it is drawn as a
+  root.
+- **Nothing under the tree is said about a filter.** A branch filter hides the
+  other branches' tasks on purpose and every task of the shown branch is drawn,
+  so a count of both populations (`16 of 49 on this branch filter`) only asks
+  where the other 33 went — the answer is "on other branches", which the branch
+  button already says. The line under the tree appears for one thing only: a read
+  that stopped at its ceiling, where a task of *this* branch genuinely may be one
+  of the rows not fetched. It says `1000 of 1200 in this project`, adds `— more
+  may be on <branch>` when a branch filter is on, and a **Load more** row sits
+  under it: one click re-reads the list at the next ceiling (`bigger`). The rows
+  on screen stay while it runs, so the click is safe twice, and its tooltip says
+  what the next read will ask for.
 - An empty read says so in the panel's own words ("No issues here", "Nothing
   closed yet", the filter the sentence is about) rather than drawing nothing,
   and a filter the panel guessed offers "Every branch" as a row in that space.
@@ -386,7 +390,8 @@ Live, in this Herdr, on `work` (a personal, wired layout):
   and the fetched copy goes.
 - **A capped read.** With the ceiling forced to 5 the line under the tree reads
   `5 of 23 in this project` and **Load more** doubles the ceiling on each click
-  (5 → 10 → 20 → 40) until the line is gone and all 23 are drawn.
+  (5 → 10 → 20 → 40) until the line is gone and all 23 are drawn. With no
+  read capped there is no line at all, on any branch filter.
 - **The detail view.** Opening `#jfqz` shows its ref, `open`, `P3`, its author,
   labels, age, `#wvb0, #ybxy` as children, and its description as rendered
   markdown. Following a ref chip to another issue swaps the nav row's `‹ All
@@ -430,7 +435,7 @@ Live, in this Herdr, on `work` (a personal, wired layout):
   the tree says how many of the project's matches it has, and **Load more** asks
   for the next ceiling until the list is whole (or kata's 8 MiB of stdout says
   otherwise). The status and branch filters still narrow the read rather than
-  page it.
+  page it, and nothing else in the panel mentions what a filter left out.
 - **`work.branch` is a convention, not a kata field.** Issues that carry their
   branch under another key show under "No branch", and the branch default cannot
   see them — which is why a default that matches nothing falls back to every

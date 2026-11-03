@@ -12,7 +12,8 @@
 // terminal would show with `kata tui`: the open work, which task belongs under
 // which, and every field the list carries. Status and branch are filters; a row
 // opens the issue's own details, out of the same read — nothing here posts,
-// claims, closes or comments, and nothing asks kata for more than one list.
+// claims, closes or comments. One list per refresh, plus a `kata show` for each
+// parent that list did not carry, so a task never loses its place in the tree.
 //
 // The branch filter follows the checkout. A space on the repo's own branch
 // (`main`, or whatever origin/HEAD says) is not about one branch, so every task
@@ -42,9 +43,20 @@ const STATUSES = [
 ];
 // How many issues one read asks for. The whole list travels as one JSON
 // document through `exec` (8 MiB of stdout), and a big project's closed issues
-// are the part that could fill it: the newest 400 of each is plenty to look at,
-// and the status filter is how the rest is reached.
-const LIMIT = 400;
+// are the part that could fill it: the newest 1000 of a status is plenty to look
+// at, and a read that stops there says so and offers the next ceiling — `bigger`,
+// one click away, until there is no ceiling at all.
+const LIMIT = 1000;
+// How many parents one read may go and ask for, one `kata show` each. A task
+// whose parent the list did not carry is drawn under it, so the tree reads
+// whole; past this many the task stands alone, which is where the panel was.
+const PARENTS = 24;
+
+// The next ceiling a capped read offers: twice this one, and past sixteen
+// thousand none at all — `--limit 0` is kata's own way of asking for every row.
+function bigger(n) {
+  return n >= 16000 ? 0 : n * 2;
+}
 // The metadata key kata's own examples use for the branch a task belongs to
 // (`kata create … --meta work.branch=audit-tokens`).
 const BRANCH = "work.branch";
@@ -216,10 +228,49 @@ function normalize(i) {
   };
 }
 
+// `kata show` is the one read that names a single issue, so the parent a task
+// points at and the list did not carry costs one exec. Its refs arrive as a
+// list of `links` around the issue rather than on it, hence the reshaping: a
+// "parent" link runs from the child to its parent, a block from the blocker to
+// what it blocks, and "related" either way.
+function relink(data, uid) {
+  const short = (x) => ({ uid: x?.uid, short_id: x?.short_id ?? "", status: x?.status ?? null });
+  const links = Array.isArray(data?.links) ? data.links : [];
+  return {
+    parent: links.find((l) => l?.type === "parent" && l.from?.uid === uid)?.to ?? null,
+    blocks: links.filter((l) => l?.type === "blocks" && l.from?.uid === uid).map((l) => short(l.to)),
+    blocked_by: links.filter((l) => l?.type === "blocks" && l.to?.uid === uid).map((l) => short(l.from)),
+    related: links.filter((l) => l?.type === "related")
+      .map((l) => (l.from?.uid === uid ? l.to : l.from)).map(short),
+  };
+}
+
+// One issue, asked for by the uid a parent reference carried. A refusal is not a
+// failure the panel shows: a parent that cannot be read is a parent the tree
+// does without, and the task is drawn on its own the way it was before.
+async function showIssue(folder, on, uid, project) {
+  const args = ["show", uid, "--json"];
+  if (project) args.push("--project", project);
+  let r;
+  try {
+    r = await exec("kata", args, { cwd: folder, on });
+  } catch {
+    return null;
+  }
+  if (r.code !== 0) return null;
+  try {
+    const data = JSON.parse(r.stdout);
+    if (!data?.issue?.uid) return null;
+    return normalize({ ...data.issue, ...relink(data, data.issue.uid), qualified_id: null });
+  } catch {
+    return null;
+  }
+}
+
 // One read of the list: the status filter as kata's own `--status`, so the
-// limit is spent on the rows being shown.
-async function listIssues(folder, on, status, project) {
-  const args = ["list", "--status", status, "--limit", String(LIMIT), "--json"];
+// ceiling is spent on the rows being shown.
+async function listIssues(folder, on, status, project, limit) {
+  const args = ["list", "--status", status, "--limit", String(limit), "--include-total", "--json"];
   if (project) args.push("--project", project);
   let r;
   try {
@@ -231,7 +282,16 @@ async function listIssues(folder, on, status, project) {
   let data;
   try { data = JSON.parse(r.stdout); } catch { return { error: "kata answered in a shape this panel cannot read" }; }
   if (data?.error) return { error: String(data.error.message ?? data.error.code ?? "kata refused the read") };
-  return { issues: (data?.issues ?? []).map(normalize) };
+  const issues = (data?.issues ?? []).map(normalize);
+  return {
+    issues,
+    // How many issues the status filter matched, and whether the ceiling cut the
+    // list short: both are kata's own words (`--include-total` counts the match,
+    // `truncated` says the limit was reached), so the panel can say what it is
+    // not showing instead of leaving a missing task unexplained.
+    total: typeof data?.total === "number" ? data.total : issues.length,
+    truncated: data?.truncated === true || (data?.truncated == null && limit > 0 && issues.length >= limit),
+  };
 }
 
 // What is left to do first, then what is most urgent, then what moved last.
@@ -264,6 +324,13 @@ export default class Kata extends View {
     this.origin = null;      // { folder, on }: the place this panel reads
     this.resolved = null;    // { name, bound } | { missing, repo }: once per place
     this.issues = [];        // the last good read, kept while a new one runs
+    // The parents the read did not carry, by uid: a small cache asked for with
+    // `kata show` (`gather`), dropped again when nothing points at it (`prune`),
+    // so the tree shows a task under its parent whatever the filters did.
+    this.ancestors = new Map();
+    this.total = null;       // how many issues the status filter matched
+    this.truncated = false;  // whether the read stopped at its ceiling
+    this.ceiling = LIMIT;    // how many rows the read asked for
     this.status = "open";
     // The branch filter. `picked` holds what the person chose, per checkout —
     // keyed "folder|branch", so a checkout of another branch is offered the
@@ -327,17 +394,34 @@ export default class Kata extends View {
       this.collapsed = new Set();
       this.selected = null;
       this.trail = [];
+      this.ancestors.clear();
+      this.total = null;
+      this.truncated = false;
+      this.ceiling = LIMIT;
       this.failure = null;
       this.missing = false;
     } else if (branched) {
-      return cx.notify();
+      // Another branch is another set of tasks, and another set of parents above
+      // them: the list is the same read, but what it needs over it is not.
+      cx.notify();
+      this.needParents(cx);
+      return;
     }
     this.read(cx);
   }
 
-  read(cx) {
+  // The parents for a filter the panel changed without a read: the rows on
+  // screen are a different slice of the same list, and the chain above them may
+  // be parents this panel has not asked for yet.
+  needParents(cx) {
+    if (!this.resolved || this.resolved.missing) return;
+    cx.spawn((cx) => this.gather(cx, this.gen, this.origin, this.resolved));
+  }
+
+  read(cx, limit = this.ceiling) {
     const origin = this.origin;
     const gen = ++this.gen;
+    this.ceiling = limit;
     const settle = (cx) => { this.loading = false; this.ready = true; cx.notify(); };
     if (!origin?.folder) {
       // A space with no terminal anywhere yet has no folder to look in.
@@ -376,30 +460,101 @@ export default class Kata extends View {
         this.issues = [];
         return settle(cx);
       }
-      const out = await listIssues(origin.folder, origin.on, this.status, project.bound ? null : project.name);
+      const out = await listIssues(origin.folder, origin.on, this.status, project.bound ? null : project.name, limit);
       if (gen !== this.gen) return;
       if (out.error) {
         // The rows that are already there stay: a read that failed says so
         // above them rather than emptying the panel.
         this.failure = { title: "Kata did not answer", message: out.error };
-      } else {
-        this.failure = null;
-        this.missing = false;
-        this.issues = out.issues;
-        // A step the new read no longer has is a step that cannot be taken: the
-        // trail keeps only what the tree above it can still show.
-        const here = new Set(this.issues.map((i) => i.uid));
-        this.trail = this.trail.filter((uid) => here.has(uid));
-        if (this.selected && !here.has(this.selected)) this.selected = null;
+        return settle(cx);
       }
+      this.failure = null;
+      this.missing = false;
+      this.issues = out.issues;
+      this.total = out.total;
+      this.truncated = out.truncated;
+      this.prune();
+      // A step the new read no longer has is a step that cannot be taken: the
+      // trail keeps only what the tree above it can still show.
+      const known = this.known();
+      this.trail = this.trail.filter((uid) => known.has(uid));
+      if (this.selected && !known.has(this.selected)) this.selected = null;
       settle(cx);
+      // The rows land first, and then their parents are asked for: a task whose
+      // parent the read did not carry stands alone for a moment, then moves
+      // under it. Nothing waits on the fetch, so a slow daemon shows the list.
+      await this.gather(cx, gen, origin, project);
     });
   }
 
   // ---- what is shown ----
 
+  // An issue the panel can draw a row for: one of the read, or a parent it went
+  // and asked after.
   by(uid) {
-    return this.issues.find((i) => i.uid === uid) ?? null;
+    return this.issues.find((i) => i.uid === uid) ?? this.ancestors.get(uid) ?? null;
+  }
+
+  // Every uid with an issue behind it, the read's and the fetched parents'.
+  known() {
+    return new Set([...this.issues.map((i) => i.uid), ...this.ancestors.keys()]);
+  }
+
+  // The parents the tree needs and does not have: the parents of the tasks the
+  // filters show, and of the parents already fetched — a parent of a parent is
+  // drawn too, so the chain to the top is whole however deep it goes.
+  missingParents() {
+    const have = this.known();
+    const want = new Set();
+    const ask = (i) => { if (i.parent && !have.has(i.parent)) want.add(i.parent); };
+    for (const i of this.filtered()) ask(i);
+    for (const i of this.ancestors.values()) ask(i);
+    return [...want];
+  }
+
+  // Ask kata for the parents the list did not carry, one `kata show` each, and
+  // repeat while a fetched parent turns out to have a parent of its own. PARENTS
+  // caps what one read may spend on this; past it a task is drawn as a root,
+  // which is where the panel started.
+  async gather(cx, gen, origin, project) {
+    const scope = project.bound ? null : project.name;
+    let left = PARENTS;
+    while (left > 0) {
+      const want = this.missingParents().slice(0, left);
+      if (!want.length) return;
+      left -= want.length;
+      const found = await Promise.all(want.map((uid) => showIssue(origin.folder, origin.on, uid, scope)));
+      if (gen !== this.gen) return;
+      let added = 0;
+      for (const i of found) {
+        if (!i || this.by(i.uid)) continue;
+        this.ancestors.set(i.uid, i);
+        added++;
+      }
+      // Nothing new came back: the rest would be asked for to no purpose.
+      if (!added) return;
+      cx.notify();
+    }
+  }
+
+  // A fetched parent is a cache of the read that asked for it: one that no task
+  // in the new read still points at, directly or through another parent, is
+  // forgotten — and so is one the new read carries itself, which is a row of its
+  // own now. A status or branch change then does not carry old rows into it.
+  prune() {
+    const have = new Set(this.issues.map((i) => i.uid));
+    const keep = new Set();
+    const need = this.issues.map((i) => i.parent).filter(Boolean);
+    while (need.length) {
+      const uid = need.pop();
+      if (keep.has(uid)) continue;
+      keep.add(uid);
+      const up = this.ancestors.get(uid)?.parent;
+      if (up) need.push(up);
+    }
+    for (const uid of [...this.ancestors.keys()]) {
+      if (!keep.has(uid) || have.has(uid)) this.ancestors.delete(uid);
+    }
   }
 
   // The filter the space asks for by itself. On the repo's own branch every task
@@ -461,46 +616,91 @@ export default class Kata extends View {
   }
 
   kids(uid) {
-    return this.issues.filter((i) => i.parent === uid);
+    return [...this.issues, ...this.ancestors.values()].filter((i) => i.parent === uid);
   }
 
   // The tree as the panel draws it: siblings in work order, each parent's
-  // children under it, and a folded row taking its subtree with it. A child
-  // whose parent the filter dropped is a root here — the alternative is a row
-  // nobody can reach.
+  // children under it, and a folded row taking its subtree with it. A task's
+  // parent is part of the tree even when a filter kept it out of the read or out
+  // of the branch: it comes back as a context row (`context: true`) rather than
+  // the task becoming a root, because the hierarchy is what the tree is for. A
+  // parent that cannot be had at all — refused by `kata show`, or past the
+  // PARENTS cap — is the one case where a task stands alone.
   rows() {
-    const all = this.filtered();
-    const have = new Set(all.map((i) => i.uid));
-    const kids = new Map();
-    const roots = [];
-    for (const i of all) {
-      if (i.parent && have.has(i.parent)) {
-        const into = kids.get(i.parent) ?? [];
-        into.push(i);
-        kids.set(i.parent, into);
-      } else {
-        roots.push(i);
+    const shown = this.filtered();
+    const nodes = new Map();    // uid -> { issue, context }
+    for (const i of shown) nodes.set(i.uid, { issue: i, context: false });
+    // The chain above each shown task, up to the first parent that is a row of
+    // its own: every one it passes on the way is a context row (anything that is
+    // not is already in `nodes`), and none of them repeats, so the chain costs
+    // one walk per task, not one per parent.
+    for (const i of shown) {
+      let up = i.parent ? this.by(i.parent) : null;
+      const seen = new Set([i.uid]);
+      while (up && !nodes.has(up.uid) && !seen.has(up.uid)) {
+        seen.add(up.uid);
+        nodes.set(up.uid, { issue: up, context: true });
+        up = up.parent ? this.by(up.parent) : null;
       }
     }
-    const below = (i) => (kids.get(i.uid) ?? []).reduce((n, kid) => n + 1 + below(kid), 0);
+    const kids = new Map();
+    const roots = [];
+    for (const node of nodes.values()) {
+      const at = node.issue.parent;
+      if (at && at !== node.issue.uid && nodes.has(at)) {
+        const into = kids.get(at) ?? [];
+        into.push(node);
+        kids.set(at, into);
+      } else {
+        roots.push(node);
+      }
+    }
+    const below = (uid, seen = new Set()) => {
+      if (seen.has(uid)) return 0;
+      seen.add(uid);
+      return (kids.get(uid) ?? []).reduce((n, kid) => n + 1 + below(kid.issue.uid, seen), 0);
+    };
+    const drawn = new Set();
     const out = [];
+    // A folded row takes its subtree with it: those rows are hidden, not moved,
+    // so they are marked drawn and nothing below draws them as a root.
+    const hide = (list) => {
+      for (const node of list) {
+        if (drawn.has(node.issue.uid)) continue;
+        drawn.add(node.issue.uid);
+        hide(kids.get(node.issue.uid) ?? []);
+      }
+    };
     const walk = (list, depth) => {
-      for (const i of [...list].sort(order)) {
-        const children = kids.get(i.uid) ?? [];
-        out.push({ issue: i, depth, kids: children.length, under: below(i) });
-        if (children.length && !this.collapsed.has(i.uid)) walk(children, depth + 1);
+      for (const node of [...list].sort((a, b) => order(a.issue, b.issue))) {
+        const uid = node.issue.uid;
+        if (drawn.has(uid)) continue;
+        drawn.add(uid);
+        const children = kids.get(uid) ?? [];
+        out.push({
+          issue: node.issue, depth, context: node.context,
+          kids: children.length, under: below(uid),
+        });
+        if (!children.length) continue;
+        if (this.collapsed.has(uid)) hide(children);
+        else walk(children, depth + 1);
       }
     };
     walk(roots, 0);
+    // Two tasks each claiming the other as parent — which no list should carry,
+    // and a bad edit could — leaves rows no root reaches. They are drawn as
+    // roots: a row nobody can see is worse than one drawn a level too high.
+    for (const node of nodes.values()) if (!drawn.has(node.issue.uid)) walk([node], 0);
     return out;
   }
 
   // One button for both directions: with anything folded, it unfolds (what a
-  // person wants after folding); with everything open, it folds.
+  // person wants after folding); with everything open, it folds. The parents it
+  // folds are the rows as drawn, so a context parent folds like any other.
   toggleAll(cx) {
     this.collapsed = this.collapsed.size > 0
       ? new Set()
-      : new Set(this.issues.filter((i) => this.kids(i.uid).length > 0).map((i) => i.uid));
+      : new Set(this.rows().filter((e) => e.kids > 0).map((e) => e.issue.uid));
     cx.notify();
   }
 
@@ -645,6 +845,7 @@ export default class Kata extends View {
       this.picked.set(this.key(), value);
       this.branchOpen = false;
       cx.notify();
+      this.needParents(cx);
     };
     const row = (id, value, label, count, active) => h_flex().id(id).h(26).flex_none().mx(6).px(10).gap(8)
       .rounded(6).items_center().cursor_pointer()
@@ -670,9 +871,15 @@ export default class Kata extends View {
     const open = !this.collapsed.has(i.uid);
     const blocked = i.blockedBy.some((b) => b.status === "open");
     const step = Math.min(entry.depth, 8);
+    // A context row is a parent the filters kept out of the list, drawn so the
+    // task under it has something to hang from: quieter than a task of this
+    // read, and saying why it is here when hovered.
+    const quiet = entry.context || i.closed;
     return h_flex().id(`kata-row-${i.uid}`).h(26).flex_none().mx(6).pl(8 + step * 14).pr(8).gap(6)
       .rounded(6).items_center().cursor_pointer().hover((s) => s.bg(t.hover))
       .on_click((_e, cx) => this.open(i.uid, cx))
+      .when(entry.context, (el) => el.tooltip(
+        "The parent of a task in this list, kept so the tree reads whole"))
       // A folded row's chevron is a button of its own: the row behind it opens
       // the issue, and a click that meant "fold" must not also open it.
       .child(entry.kids > 0
@@ -689,7 +896,7 @@ export default class Kata extends View {
             .when(blocked, (el) => el.tooltip("Blocked by an open issue"))))
       .child(div().flex_none().text_size(11).text_color(t.dim).child(`#${i.ref}`))
       .child(div().flex_1().min_w(0).truncate()
-        .text_color(i.closed ? t.muted : t.foreground).child(i.title))
+        .text_color(quiet ? t.muted : t.foreground).child(i.title))
       .when(i.priority != null, (el) => el
         .child(div().flex_none().text_size(10).text_color(priorityColor(t, i.priority)).child(`P${i.priority}`)))
       .when(!open && entry.under > 0, (el) => el
@@ -708,7 +915,6 @@ export default class Kata extends View {
   tree(cx) {
     const t = theme();
     const rows = this.rows();
-    const here = this.filtered().length;
     const chosen = this.chosen();
     // An empty tree that a filter emptied offers the whole project in one click;
     // the default filter is a guess, and a guess must not look like an empty repo.
@@ -725,14 +931,49 @@ export default class Kata extends View {
         .child(this.status === "closed" ? "Nothing closed yet" : "No issues here"))
       .child(div().text_size(11.5).text_color(t.dim).child(this.emptyLine()))
       .when(Boolean(escape), (el) => el.child(escape));
+    // What the tree is not showing, under it: a filter hiding rows of the read,
+    // or a read that stopped at its ceiling. The count says the tree is not the
+    // whole project, so nobody hunts for a task that is not drawn, and a capped
+    // list carries the one click that draws more.
+    const note = this.footNote();
     return v_flex().id("kata-scroll").flex_1().min_h(0).overflow_y_scrollbar().py(4)
       .when(rows.length === 0 && !this.loading, (el) => el.child(empty))
       .children(rows.map((e) => this.row(e, cx)))
-      // How many of the read are shown, when a filter is hiding some. The count
-      // says the tree is not the whole project, so nobody hunts for a missing task.
-      .when(chosen !== undefined && here !== this.issues.length, (el) => el
-        .child(div().px(16).py(8).text_size(10.5).text_color(t.dim)
-          .child(`${here} of ${this.issues.length} on this branch filter`)));
+      .when(Boolean(note), (el) => el
+        .child(div().px(16).pt(4).text_size(10.5).text_color(t.dim).child(note)))
+      .when(this.truncated, (el) => el.child(this.moreButton(cx)));
+  }
+
+  // What the tree is not showing, in one line. Two omissions, and they are not
+  // the same: a branch filter hiding rows of the read, and a read that stopped
+  // at its ceiling with the rest of the project still in kata.
+  footNote() {
+    const total = this.total ?? this.issues.length;
+    const here = this.filtered().length;
+    if (this.truncated) {
+      const bits = [`${this.issues.length} of ${total} in this project`];
+      if (here !== this.issues.length) bits.push(`${here} on this branch filter`);
+      return bits.join(" — ");
+    }
+    return here === total ? "" : `${here} of ${total} on this branch filter`;
+  }
+
+  // The read stopped at its ceiling. One click reads the list again with a
+  // bigger one; the rows on screen stay while it runs, so it is safe twice.
+  moreButton(cx) {
+    const t = theme();
+    const next = bigger(this.ceiling);
+    const tip = `The read stopped at ${this.ceiling} rows — ask for ${next === 0 ? "all of them" : `up to ${next}`}`;
+    return h_flex().id("kata-more").h(24).flex_none().mx(6).mt(2).px(10).gap(6).rounded(6).items_center()
+      .cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(tip)
+      .on_click((_e, cx) => this.loadMore(cx))
+      .child(svg(`${ICONS}/chevron-down.svg`).size(11).flex_none().text_color(t.dim))
+      .child(div().flex_none().text_size(11.5).text_color(t.muted).child("Load more"))
+      .child(div().flex_1());
+  }
+
+  loadMore(cx) {
+    this.read(cx, bigger(this.ceiling));
   }
 
   // One line of the detail: a label and its value, or the refs it points at.

@@ -5,9 +5,11 @@ tab in the side panel that shows the space's kata issues as a tree — the work
 that is open, which task belongs under which, and a detail view per issue — with
 a status filter, a branch filter, and foldable parents.
 
-Read-only by design. It reads `kata list --json` and nothing else: no claim, no
-close, no comment, no `kata show`, and no writes anywhere. It is a window onto
-the same list `kata tui` shows, sized the way a 368 px side panel can take it.
+Read-only by design: it writes nothing — no claim, no close, no comment, no
+edit. Its reads are one `kata list` per refresh, plus a `kata show` for each
+parent that list did not carry, so a task never loses its place in the tree. It
+is a window onto the same list `kata tui` shows, sized the way a 368 px side
+panel can take it.
 
 The branch filter follows the checkout. A space on the repo's own branch
 (`main`, or whatever `origin/HEAD` says) is not about one branch, so every task
@@ -99,22 +101,43 @@ space changing, or that folder changing, is noticed once a second by reading
 
 ## The read
 
-One command per refresh:
+One list per refresh — plus one `kata show` for each parent it left out:
 
 ```sh
-kata list --status <open|closed|all> --limit 400 --json
+kata list --status <open|closed|all> --limit 1000 --include-total --json
 ```
 
-- `--status` is the filter itself, not a post-filter, so the 400-row cap is
-  spent on the rows being shown. 400 is the ceiling: the whole list arrives as
-  one JSON document through `exec` (8 MiB of stdout), and a big project's
-  closed issues are the part that could fill it. The status filter is how the
-  rest is reached.
+- `--status` is the filter itself, not a post-filter, so the ceiling is spent on
+  the rows being shown. The whole list arrives as one JSON document through
+  `exec` (8 MiB of stdout), and a big project's closed issues are the part that
+  could fill it: 1000 rows of one status is the ceiling, and a read that stops
+  there says so and offers the next one — 2000, 4000, 8000, 16000, and then
+  `--limit 0`, which is kata's own way of asking for every row.
+- `--include-total` is what makes that honest: kata counts the matches itself
+  (`total`) and says whether the ceiling cut the list (`truncated`), so the line
+  under the tree can say `1000 of 1200 in this project` instead of quietly
+  showing a subset.
 - `--project <name>` only in case 2 above; a bound project runs without it, the
   way kata itself resolves one.
 - Each issue is normalized on arrival to what the panel draws: ref, title,
   body, status, owner, author, priority, labels, `work.branch`, `parent`,
   timestamps, and its `blocks`/`blocked_by`/`related` refs.
+- **Parents the read did not carry are asked for one by one**:
+
+  ```sh
+  kata show <uid> --json         # one per missing parent, at most 24 a read
+  ```
+
+  The list carries an issue's parent as `{uid, short_id, status}`, and a parent
+  can be missing for two reasons: the status filter left it out (a closed parent
+  over open work), or the branch filter did — a task recorded on a branch whose
+  parent is not. Either way the parent is a row above its task, fetched with
+  `kata show` and drawn quieter than a task of this read. `kata show` answers
+  with the issue plus a `links` array rather than the list's own shape, so that
+  one read is reshaped into the same normalized issue (its parent is the `parent`
+  link running from child to parent; a block runs from blocker to blocked). A
+  parent that answers no, or a 25th parent in one read, leaves the task standing
+  alone — which is where the panel started.
 - A refusal is shown as kata wrote it — `kata` prints `{error: {message, hint}}`
   on stderr, so "no .kata.toml ancestor and no git ancestor" arrives with the
   `kata init --project` hint that fixes it.
@@ -219,10 +242,24 @@ fill:
   `dim` above that — the queue's own emphasis.
 - A folded row carries `+N`, N being every task under it, not just its children.
 - Siblings sort by work order: open before closed, then priority (unset last),
-  then most recently updated. A child whose parent the filter dropped is drawn
-  as a root: the alternative is a row nobody can reach.
+  then most recently updated.
+- **A task always hangs from its parent.** When a filter keeps the parent out of
+  the read, or out of the branch, the parent comes back as a **context row**:
+  same 26 px row, same fold chevron, `muted` title, and a tooltip saying why it
+  is there. Context rows are not counted as tasks of the read — the branch
+  counts and the line under the tree are the filter's own — so the tree shows
+  `#54b1 Video-editor ideas: research backlog +5` above the five tasks that
+  belong to it without pretending the parent is on that branch. A parent whose
+  own parent is out of the read pulls that one in too, so the chain to the top
+  is whole. A task whose parent cannot be had at all is the one case where it is
+  drawn as a root.
 - With a branch filter hiding some of the read, a line under the tree says `N of
   M on this branch filter`, so nothing looks missing without a reason.
+- When the read stopped at its ceiling, the same line says `1000 of 1200 in this
+  project`, and a **Load more** row sits under it: one click re-reads the list at
+  the next ceiling (`bigger`). The rows on screen stay while it runs, so the
+  click is safe twice, and the line's tooltip says what the next read will ask
+  for.
 - An empty read says so in the panel's own words ("No issues here", "Nothing
   closed yet", the filter the sentence is about) rather than drawing nothing,
   and a filter the panel guessed offers "Every branch" as a row in that space.
@@ -269,12 +306,14 @@ down — is the same note with kata's own message, and the ↻ above it retries.
 - **One read at a time.** Every read takes a generation number and an older
   answer that lands late is dropped, so a status click during a slow read
   cannot paint the old filter's rows under the new filter's buttons.
-- **Nothing is remembered once the place moves.** Rows, folds, the open issue
-  and the trail behind it all belong to the space they came from; switching
-  space, or `cd`-ing to another repo, starts clean. State that survives a
-  *re-read* of the same place (folds, an open issue, the branch picks) stays,
-  which is what makes the 15 s refresh invisible; an open issue that the new
-  read no longer has closes back to the tree.
+- **Nothing is remembered once the place moves.** Rows, folds, the open issue,
+  the trail behind it and the parents fetched for it all belong to the space they
+  came from; switching space, or `cd`-ing to another repo, starts clean. State
+  that survives a *re-read* of the same place (folds, an open issue, the branch
+  picks, parents a task still points at, the read's ceiling) stays, which is what
+  makes the 15 s refresh invisible; an open issue that the new read no longer
+  has closes back to the tree, and a parent the new read carries itself stops
+  being a fetched copy.
 - **The trail is the issues, not a browser history.** Following a ref chip or
   the parent chip is one step further in; opening a row in the tree starts a
   new trail at that row, which is why the tree is always where an empty trail
@@ -290,8 +329,8 @@ down — is the same note with kata's own message, and the ↻ above it retries.
   read keeps running with the panel collapsed — opening the panel again shows a
   list that is already fresh.
 - **Read-only, deliberately.** There is no claim, close, comment or edit here,
-  and no `kata show`: everything on the detail view comes from the list the
-  panel already read. Adding writes would need a claim flow, an actor, and a
+  and the only reads are the list and the `kata show` calls that fill in a
+  missing parent. Adding writes would need a claim flow, an actor, and a
   confirmation for the destructive ones; that is a different mod, and a person
   can do all of it from `kata tui` in a terminal.
 - **It never steals the keyboard.** The panel takes no focus handle: no key
@@ -334,9 +373,20 @@ Live, in this Herdr, on `work` (a personal, wired layout):
   off within one refresh: the same space then draws the branch filter's empty
   state (`No open issues on feat/explainer-skill.`) with the "Every branch" row
   that clears it.
-- **A bigger project.** `~/work/posit-dev/shinychat` (84 open / 442 closed)
+- **A bigger project.** `~/work/posit-dev/shinychat` (85 open / 528 all)
   draws three levels of nesting and the branch filter lists its branches with
-  counts — `feat/history-exchange-tree` at 55, `feat/page-chat` at 42.
+  counts — `feat/history-exchange-tree` at 2, `history-tree/r-port` at 2. On
+  that branch the two tasks keep their parents: two context rows (`#6d0d`, and
+  `#3re1` above it) come from the read itself, because neither parent is
+  recorded on the branch.
+- **A parent the read does not have.** `~/work/posit-dev/paparazzi` on **Open**
+  draws `#qnyw` under `#rbw4 Agent-facing documentation: package-shipping` — a
+  **closed** parent, fetched with one `kata show`, drawn `muted` with its fold
+  chevron and a `+1` count. Under **All** the same parent is a row of the read,
+  and the fetched copy goes.
+- **A capped read.** With the ceiling forced to 5 the line under the tree reads
+  `5 of 23 in this project` and **Load more** doubles the ceiling on each click
+  (5 → 10 → 20 → 40) until the line is gone and all 23 are drawn.
 - **The detail view.** Opening `#jfqz` shows its ref, `open`, `P3`, its author,
   labels, age, `#wvb0, #ybxy` as children, and its description as rendered
   markdown. Following a ref chip to another issue swaps the nav row's `‹ All
@@ -357,9 +407,12 @@ Live, in this Herdr, on `work` (a personal, wired layout):
   `refresh`, `read`), the project resolution (`tomlProject`, `repoName`,
   `resolveProject`), the branch default (`trunkBranch`, `branchMode`,
   `automatic`, `isTrunk`, `key`, `chosen`, `fellBack`), the list model
-  (`filtered`, `branches`, `rows`), the trail between issues (`open`, `back`,
-  `dismiss`, `cameFrom`, `nav`), and the drawing (`head`, `filters`, `chooser`,
-  `tree`, `row`, `detail`, `render`). No state lives outside the copy.
+  (`filtered`, `branches`, `rows`, `known`, `kids`), the parents the list left
+  out (`showIssue`, `relink`, `missingParents`, `gather`, `prune`,
+  `needParents`), the read's ceiling (`bigger`, `footNote`, `moreButton`,
+  `loadMore`), the trail between issues (`open`, `back`, `dismiss`,
+  `cameFrom`, `nav`), and the drawing (`head`, `filters`, `chooser`, `tree`,
+  `row`, `detail`, `render`). No state lives outside the copy.
 - `mods/kata/mod.json` — the contract, verbatim.
 - `mods/kata/icon.svg` — the tab bar's glyph, a list with two checks;
   `chevron-*.svg`, `fold.svg`, `unfold.svg`, `refresh.svg`, `branch.svg`,
@@ -372,16 +425,23 @@ Live, in this Herdr, on `work` (a personal, wired layout):
 
 ## Limits
 
-- **400 rows per status.** A project with more than 400 issues in one status
-  shows the 400 most recently updated; the filters, not scrolling, are how the
-  rest is reached.
+- **1000 rows per status, and a way past it.** A project with more than 1000
+  issues in one status arrives as the 1000 most recently updated, the line under
+  the tree says how many of the project's matches it has, and **Load more** asks
+  for the next ceiling until the list is whole (or kata's 8 MiB of stdout says
+  otherwise). The status and branch filters still narrow the read rather than
+  page it.
 - **`work.branch` is a convention, not a kata field.** Issues that carry their
   branch under another key show under "No branch", and the branch default cannot
   see them — which is why a default that matches nothing falls back to every
   branch rather than opening empty.
-- **The tree is what the list knows.** A child whose parent falls outside the
-  read is drawn as a root, and refs to issues outside the read are text, not
-  links.
+- **The tree is the list, plus the parents above it.** A ref to an issue the
+  panel has not read is text, not a link; a *parent* is the exception, because
+  the hierarchy is the point of the tree — it is fetched and drawn as a context
+  row. A fetched parent is as fresh as the read that asked for it: it is not
+  re-asked on the 15 s timer, so its title and status are the ones `kata show`
+  gave, until it turns up in the list itself or the panel is asked again with
+  ↻ (or the space moves), which forgets the fetched copies and asks again.
 - **No keyboard.** The panel is click-only (and hover), on purpose: it never
   takes focus from the terminal it was opened from.
 - **One list, no comments.** The detail view is the issue, not its thread;

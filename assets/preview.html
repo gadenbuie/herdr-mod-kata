@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>kata</title>
+<style>
+  :root {
+    /* Herdr 0.1.12 dark theme, as the app renders it */
+    --chrome: #101114;
+    --canvas: #131518;
+    --surface: #17191d;
+    --raised: #2c2e31;
+    --line: rgba(255, 255, 255, 0.095);
+    --hover: rgba(255, 255, 255, 0.055);
+    --selected: rgba(255, 255, 255, 0.09);
+    --fg: #eeeeef;
+    --tfg: #d2d4d9;
+    --muted: #98999b;
+    --dim: #696a6d;
+    --accent: #96b2d7;
+    --amber: #d8be87;
+    --red: #dc8c95;
+    --done: #76a8ff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1280px; height: 640px; overflow: hidden; }
+  body {
+    background: var(--chrome);
+    color: var(--fg);
+    font-family: -apple-system, "SF Pro Display", "Helvetica Neue", "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 42px 72px 34px;
+  }
+  .wordmark { display: flex; align-items: center; gap: 10px; height: 24px; }
+  .wordmark .dots { display: flex; gap: 7px; }
+  .wordmark .dots i { width: 11px; height: 11px; border-radius: 50%; background: var(--raised); }
+  .wordmark .name { font-size: 16px; font-weight: 650; letter-spacing: 0.01em; color: var(--fg); }
+  .wordmark .tag { font-size: 15px; color: var(--muted); }
+  h1 {
+    margin-top: 24px;
+    font-size: 62px;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.04;
+    text-align: center;
+  }
+  h1 .tree { color: var(--accent); }
+  p.pitch {
+    margin-top: 14px;
+    max-width: 880px;
+    font-size: 18.5px;
+    line-height: 1.45;
+    color: var(--muted);
+    text-align: center;
+    text-wrap: balance;
+  }
+  p.pitch strong { color: var(--tfg); font-weight: 550; }
+  /* ── the window mock: the Kata tab, and the panel it opens ── */
+  .window {
+    margin-top: 32px;
+    width: 1016px;
+    border-radius: 12px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+  }
+  .tabbar {
+    display: flex;
+    align-items: center;
+    height: 46px;
+    padding: 0 12px;
+    background: linear-gradient(180deg, #101114 0%, var(--canvas) 100%);
+    border-bottom: 1px solid var(--line);
+    gap: 2px;
+  }
+  .dots { display: flex; gap: 7px; padding: 0 10px 0 4px; }
+  .dots i { width: 11px; height: 11px; border-radius: 50%; background: var(--raised); }
+  .tb {
+    display: flex; align-items: center; gap: 7px;
+    height: 32px; padding: 0 11px;
+    border-radius: 7px;
+    font-size: 14px; color: var(--muted);
+  }
+  .tb.active { background: var(--raised); color: var(--fg); }
+  .tb.active .glyph { color: var(--accent); }
+  .body { display: flex; height: 318px; }
+
+  /* the terminal: the same list, as `kata tui` shows it */
+  .terminal {
+    flex: 1;
+    padding: 14px 18px;
+    background: var(--surface);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13px;
+    line-height: 1.85;
+    color: var(--tfg);
+    border-right: 1px solid var(--line);
+    overflow: hidden;
+  }
+  .terminal .p1 { color: #a6bd91; }
+  .terminal .p2 { color: #96b2d7; }
+  .terminal .p3 { color: #b5a2ce; }
+  .terminal .faint { color: var(--dim); }
+  .terminal .tui { margin-top: 6px; }
+  .terminal .tui .hd { color: var(--muted); }
+  .terminal .tui .row { display: flex; gap: 8px; white-space: nowrap; }
+  .terminal .tui .ref { color: var(--muted); }
+  .terminal .tui .pr { margin-left: auto; color: var(--dim); flex: none; }
+  .terminal .tui .pr.p1 { color: #dc8c95; }
+  .terminal .tui .pr.p2 { color: #d8be87; }
+
+  /* the panel: 368 px wide in the real layout, given the stage here */
+  .panel {
+    width: 384px;
+    flex: none;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+  }
+  .head {
+    display: flex; align-items: center; gap: 8px;
+    height: 42px; padding: 0 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .head .title { font-size: 13px; font-weight: 600; }
+  .head .chip {
+    padding: 2px 8px;
+    border-radius: 99px;
+    background: var(--raised);
+    font-size: 10.5px;
+    color: var(--muted);
+    max-width: 170px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .head .icons { margin-left: auto; display: flex; gap: 8px; color: var(--muted); }
+  .head .icons svg { display: block; }
+
+  .filters {
+    display: flex; align-items: center;
+    height: 34px; padding: 0 14px;
+    border-bottom: 1px solid var(--line);
+    gap: 6px;
+  }
+  .pill {
+    height: 22px; padding: 0 11px;
+    border-radius: 99px;
+    font-size: 11.5px;
+    line-height: 22px;
+    color: var(--muted);
+  }
+  .pill.on { background: var(--selected); color: var(--fg); }
+  .branch {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 6px;
+    height: 22px; padding: 0 9px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    color: var(--dim);
+  }
+  .branch svg { display: block; }
+
+  .rows { padding: 5px 6px 8px; }
+  .row {
+    display: flex; align-items: center; gap: 7px;
+    height: 26px;
+    padding: 0 8px;
+    border-radius: 6px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .row:hover { background: var(--hover); }
+  .row .chev { color: var(--muted); display: flex; }
+  .row .chev svg { display: block; }
+  .row .pad { width: 14px; flex: none; }
+  .row .ref { font-size: 11px; color: var(--dim); }
+  .row .text { overflow: hidden; text-overflow: ellipsis; }
+  .row .text.closed { color: var(--muted); }
+  .row .pr {
+    margin-left: auto;
+    font-size: 10px;
+    flex: none;
+  }
+  .row .pr.p1 { color: var(--red); }
+  .row .pr.p2 { color: var(--amber); }
+  .row .pr.low { color: var(--dim); }
+  .row .count { margin-left: 6px; font-size: 11px; color: var(--dim); flex: none; }
+  .mark { width: 6px; height: 6px; border-radius: 99px; background: var(--dim); flex: none; }
+  .mark.blocked { background: var(--amber); }
+  .check { color: var(--done); display: flex; flex: none; }
+
+  .caption {
+    margin-top: 18px;
+    font-size: 14.5px;
+    color: var(--dim);
+    text-align: center;
+  }
+  .caption .repo { color: var(--muted); }
+</style>
+</head>
+<body>
+  <div class="wordmark">
+    <span class="dots"><i></i><i></i><i></i></span>
+    <span class="name">Kata</span>
+    <span class="tag">· a Herdr mod</span>
+  </div>
+  <h1>Every task in its <span class="tree">tree.</span></h1>
+  <p.pitch>Kata issues beside Files and Changes: <strong>status, branch and search over one read-only list.</strong></p.pitch>
+
+  <div class="window">
+    <div class="tabbar">
+      <span class="dots"><i></i><i></i><i></i></span>
+      <div class="tb"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h10M3 12h16M3 17h7"/></svg>Files</div>
+      <div class="tb"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>Changes</div>
+      <div class="tb active"><svg class="glyph" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l2 2 3-4M3 17l2 2 3-4M13 6h8M13 12h8M13 18h8"/></svg>Kata</div>
+    </div>
+    <div class="body">
+      <div class="terminal">
+        <span class="p1">~/demo/field-guide</span> <span class="faint">on</span> <span class="p2">main</span>
+        <div class="tui">
+          <div class="row hd"><span>field-guide · 11 open</span></div>
+          <div class="row"><span>▸</span><span class="ref">jydf</span><span>Migration map: seasonal ranges go blank</span><span class="pr p1">P1</span></div>
+          <div class="row"><span class="faint">└─</span><span class="ref">dcrz</span><span>Sightings list: group by week, not by day</span><span class="pr p2">P2</span></div>
+          <div class="row"><span class="faint">└─</span><span class="ref">48ec</span><span>Field marks: draw the wing-bar on every sparrow plate</span><span class="pr p2">P2</span></div>
+          <div class="row"><span>▸</span><span class="ref">gtac</span><span>Offline packs: plan trips without a signal</span><span class="pr">P3</span></div>
+          <div class="row"><span>▸</span><span class="ref">0fsc</span><span>Accessibility: label plates for screen readers</span><span class="pr p2">P2</span></div>
+          <div class="row"><span>&nbsp;</span><span class="ref">n9td</span><span>Audio notes: scrub a clip before sharing it</span><span class="pr">P4</span></div>
+          <div class="row hd"><span class="faint">the same issues, in the terminal — kata tui</span></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="head">
+          <span class="title">Kata</span>
+          <span class="chip">field-guide</span>
+          <span class="icons">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9l5-5 5 5M5 15l5 5 5-5" transform="translate(2,0)"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/></svg>
+          </span>
+        </div>
+        <div class="filters">
+          <span class="pill on">Open</span>
+          <span class="pill">Closed</span>
+          <span class="pill">All</span>
+          <span class="branch">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5.5" r="2.2"/><circle cx="6" cy="18.5" r="2.2"/><circle cx="18" cy="7.5" r="2.2"/><path d="M6 7.7v8.6M8.2 5.9c6-.8 7.6 1 7.6 1M8.2 18.1c6 .8 7.6-1 7.6-1"/></svg>
+            All branches
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </span>
+        </div>
+        <div class="rows">
+          <div class="row" style="padding-left:8px">
+            <span class="chev"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+            <span class="mark"></span>
+            <span class="ref">#h21a</span>
+            <span class="text">Migration map: seasonal ranges go blank</span>
+            <span class="pr p1">P1</span>
+          </div>
+          <div class="row" style="padding-left:22px">
+            <span class="pad"></span>
+            <span class="mark blocked"></span>
+            <span class="ref">#m02</span>
+            <span class="text">Sightings list: group by week, not by day</span>
+            <span class="pr p2">P2</span>
+          </div>
+          <div class="row" style="padding-left:22px">
+            <span class="pad"></span>
+            <span class="mark"></span>
+            <span class="ref">#m03</span>
+            <span class="text">Field marks: draw the wing-bar on every sparrow plate</span>
+            <span class="pr p2">P2</span>
+          </div>
+          <div class="row" style="padding-left:8px">
+            <span class="chev"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span>
+            <span class="mark"></span>
+            <span class="ref">#p10</span>
+            <span class="text">Offline packs: plan trips without a signal</span>
+            <span class="count">+2</span>
+            <span class="pr low">P3</span>
+          </div>
+          <div class="row" style="padding-left:8px">
+            <span class="chev"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span>
+            <span class="mark"></span>
+            <span class="ref">#g08</span>
+            <span class="text">Accessibility: label plates for screen readers</span>
+            <span class="count">+2</span>
+            <span class="pr p2">P2</span>
+          </div>
+          <div class="row" style="padding-left:8px">
+            <span class="pad"></span>
+            <span class="mark"></span>
+            <span class="ref">#t06</span>
+            <span class="text">Audio notes: scrub a clip before sharing it</span>
+            <span class="pr low">P4</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="caption"><span class="repo">gadenbuie/herdr-mod-kata</span> · MIT</p>
+</body>
+</html>

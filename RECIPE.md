@@ -9,6 +9,11 @@ the way a 368 px side panel can take it.
 
 ![Kata](preview.png)
 
+The preview above is drawn; this is the panel as the app really renders it
+(`assets/panel-real.png`, a made-up project on a real checkout):
+
+![The real panel](assets/panel-real.png)
+
 ## What you see
 
 The panel is a card of its own in the side panel — 368 px wide in the
@@ -182,8 +187,8 @@ thing.
   not also open the row), then a marker, the `#ref` at 11 px in `dim`, the
   title, and the priority.
 - The marker is a filled circle at 6 px: `ansi3` (amber) when an open issue
-  blocks something open — its tooltip says `Blocked by an open issue` — else
-  `dim`. A closed issue gets a check-circle in the theme's `done` color
+  is blocked by another open one — its tooltip says `Blocked by an open issue`
+  — else `dim`. A closed issue gets a check-circle in the theme's `done` color
   instead (blue in Herdr's dark theme), and its title turns `muted`.
 - The title truncates; if it is the row's only content, the row is still
   clickable edge to edge.
@@ -465,9 +470,11 @@ kata list --status <open|closed|all> --limit 1000 --include-total --json
   `chevron-*.svg`, `fold.svg`, `unfold.svg`, `refresh.svg`, `branch.svg`,
   `search.svg`, `check-circle.svg` are the panel's own icons, all 24×24 and
   one-color (`stroke="currentColor"`) so they tint with the theme.
-- `preview.png` (the window) and `assets/panel-search.png` (the panel, search
-  open) — drawn pictures of this document's panels; the fictional issues in
-  them are made up for the docs, not a real project.
+- `preview.png` (the drawn hero, from `assets/preview.html`) and
+  `assets/panel-search.png` (the drawn search close-up, from
+  `assets/panel-search.html`) — fictional issues, made up for the docs.
+  `assets/panel-real.png` is the photographed truth: the same fictional
+  project rendered by the real app, cropped to the panel.
 - `mods/kata/gpui-kit.d.ts`, `jsconfig.json` — the app's own type file
   (rewritten by Herdr on every start; this copy is the editor's) and the
   settings that make it resolve `gpui-kit`/`gpui-base`/`herdr` without

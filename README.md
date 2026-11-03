@@ -11,6 +11,11 @@ is the window onto the same list while you work.
 
 ![Kata: the space's issues as a tree in the side panel](preview.png)
 
+The preview above is drawn. This is the panel as the app really renders it —
+a made-up project on a real checkout, photographed:
+
+![The real Kata panel](assets/panel-real.png)
+
 It is a [tab-host](https://github.com/gadenbuie/herdr-mod-tab-host)
 contributor: a Herdr mod of its own whose `mod.json` declares one `tab`, which
 tab-host reads to draw the button and add the mod's block to the side panel's

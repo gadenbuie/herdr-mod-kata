@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>kata search</title>
+<style>
+  :root {
+    /* Herdr 0.1.12 dark theme, as the app renders it */
+    --chrome: #101114;
+    --canvas: #131518;
+    --surface: #17191d;
+    --raised: #2c2e31;
+    --line: rgba(255, 255, 255, 0.095);
+    --hover: rgba(255, 255, 255, 0.055);
+    --selected: rgba(255, 255, 255, 0.09);
+    --fg: #eeeeef;
+    --tfg: #d2d4d9;
+    --muted: #98999b;
+    --dim: #696a6d;
+    --accent: #96b2d7;
+    --amber: #d8be87;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 640px; height: 560px; overflow: hidden; }
+  body {
+    background: var(--chrome);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: -apple-system, "SF Pro Display", "Helvetica Neue", "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .panel {
+    width: 316px;
+    background: var(--surface);
+    color: var(--fg);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+  }
+  .head {
+    display: flex; align-items: center; gap: 8px;
+    height: 42px; padding: 0 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .head .title { font-size: 13px; font-weight: 600; }
+  .head .chip {
+    padding: 2px 8px;
+    border-radius: 99px;
+    background: var(--raised);
+    font-size: 10.5px;
+    color: var(--muted);
+  }
+  .head .icons { margin-left: auto; display: flex; gap: 8px; }
+  .head .icons .btn {
+    width: 24px; height: 24px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 6px;
+    color: var(--muted);
+  }
+  .head .icons .btn.on { background: var(--selected); color: var(--fg); }
+
+  .filters {
+    display: flex; align-items: center;
+    height: 34px; padding: 0 14px;
+    border-bottom: 1px solid var(--line);
+    gap: 6px;
+  }
+  .pill {
+    height: 22px; padding: 0 11px;
+    border-radius: 99px;
+    font-size: 11.5px;
+    line-height: 22px;
+    color: var(--muted);
+  }
+  .pill.on { background: var(--selected); color: var(--fg); }
+  .branch {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 6px;
+    height: 22px; padding: 0 9px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    color: var(--dim);
+  }
+
+  .search {
+    display: flex; align-items: center; gap: 8px;
+    height: 34px; padding: 0 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .search svg { flex: none; color: var(--accent); }
+  .search .q { font-size: 11.5px; color: var(--fg); }
+  .search .cursor { width: 1px; height: 13px; background: var(--tfg); }
+  .search .x { margin-left: auto; color: var(--muted); }
+
+  .rows { padding: 6px 6px 10px; }
+  .group {
+    height: 24px;
+    display: flex; align-items: center;
+    padding: 0 8px;
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+  .row {
+    display: flex; align-items: center; gap: 7px;
+    height: 26px;
+    padding: 0 8px;
+    border-radius: 6px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .row:hover { background: var(--hover); }
+  .row .ref { font-size: 11px; color: var(--dim); }
+  .row .text { overflow: hidden; text-overflow: ellipsis; }
+  .row .pr { margin-left: auto; font-size: 10px; flex: none; }
+  .row .pr.p2 { color: var(--amber); }
+  .row .pr.low { color: var(--dim); }
+  .mark { width: 6px; height: 6px; border-radius: 99px; background: var(--dim); flex: none; }
+  .row.desc { height: 42px; align-items: flex-start; padding-top: 5px; }
+  .row.desc .wrap { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .row.desc .line { font-size: 11px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+</style>
+</head>
+<body>
+  <div class="panel">
+    <div class="head">
+      <span class="title">Kata</span>
+      <span class="chip">field-guide</span>
+      <span class="icons">
+        <span class="btn on"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg></span>
+        <span class="btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/></svg></span>
+      </span>
+    </div>
+    <div class="filters">
+      <span class="pill on">Open</span>
+      <span class="pill">Closed</span>
+      <span class="pill">All</span>
+      <span class="branch">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5.5" r="2.2"/><circle cx="6" cy="18.5" r="2.2"/><circle cx="18" cy="7.5" r="2.2"/><path d="M6 7.7v8.6M8.2 5.9c6-.8 7.6 1 7.6 1M8.2 18.1c6 .8 7.6-1 7.6-1"/></svg>
+        All branches
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+      </span>
+    </div>
+    <div class="search">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg>
+      <span class="q">sparrow</span>
+      <span class="cursor"></span>
+      <span class="x"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span>
+    </div>
+    <div class="rows">
+      <div class="group">2 in the id or title</div>
+      <div class="row">
+        <span class="mark"></span>
+        <span class="ref">#m03</span>
+        <span class="text">Field marks: draw the wing-bar on every sparrow plate</span>
+        <span class="pr p2">P2</span>
+      </div>
+      <div class="row">
+        <span class="mark"></span>
+        <span class="ref">#g11</span>
+        <span class="text">Gallery: compare sparrows side by side</span>
+        <span class="pr low">P4</span>
+      </div>
+      <div class="group">1 in the description</div>
+      <div class="row desc">
+        <span class="mark"></span>
+        <span class="ref">#b21</span>
+        <span class="wrap">
+          <span class="text">Range maps: winter ranges drift south</span>
+          <span class="line">…the sparrow's winter range has moved faster than the atlas records…</span>
+        </span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

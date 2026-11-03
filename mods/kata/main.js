@@ -33,7 +33,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState, TextView } from "gpui-base";
-import { spaces, focused, panes, exec, theme, readTextFile, appHome } from "herdr";
+import { spaces, focused, panes, exec, theme, readTextFile, appHome, shared, setShared } from "herdr";
 
 const ICONS = "mods/kata";
 // The status filter's buttons, in the order they draw: what is left to do first.
@@ -68,6 +68,15 @@ const UP = 12;
 const TRUNK = ["main", "master", "trunk"];
 // This panel's settings, on this machine (see branchMode).
 const SETTINGS = () => `${appHome()}/data/kata/settings.json`;
+
+// The shared key this panel keeps the space's state in — mod.json's `tab.state`.
+// tab-host holds one value of it per space: the space being left has what the
+// key held saved under it, and the space arrived at gets its own back, null
+// when it never had any — so the state sticks to the workspace and comes back
+// when the person does. This copy never names a space; it writes the key on
+// the panel's own doings and takes the key back in when it shows something it
+// did not write itself (see sync).
+const STATE = "kata.state";
 
 // ---- the place ----
 
@@ -362,6 +371,11 @@ function snippet(body, q, width = 84) {
 
 export default class Kata extends View {
   init(_props, cx) {
+    // What the shared state key held as this copy last saw it — the string it
+    // wrote, or the one it took in — so a render can tell a space's own value
+    // arriving from the value this copy put there. Nothing yet: the first
+    // render takes in whatever this space had saved.
+    this.saved = undefined;
     this.origin = null;      // { folder, on }: the place this panel reads
     this.resolved = null;    // { name, bound } | { missing, repo }: once per place
     this.issues = [];        // the last good read, kept while a new one runs
@@ -430,11 +444,91 @@ export default class Kata extends View {
     return placeOf(activeSpace());
   }
 
+  // ---- the state that sticks to the space ----
+
+  // The state the space keeps, as the shared key holds it: which status is
+  // showing, the branch picks (the person's own per checkout — `undefined` for
+  // every branch and `null` for none, spelled out because JSON has no
+  // undefined), the issue the detail view shows, the trail behind it, and the
+  // folded rows. The search and the open branch chooser stay out: a field
+  // mid-word and a menu mid-look are this minute's doings, not the space's.
+  snapshot() {
+    return JSON.stringify({
+      status: this.status,
+      picked: [...this.picked].map(([key, pick]) => ({
+        key,
+        pick: pick === undefined ? { all: true } : pick === null ? { none: true } : { branch: pick },
+      })),
+      selected: this.selected,
+      trail: this.trail,
+      collapsed: [...this.collapsed],
+    });
+  }
+
+  // Write the state — from the panel's own doings only: a click, a pick, a
+  // refresh button. Never from the timers or a read coming back: a copy asleep
+  // in one space would otherwise write its stale view into whatever space the
+  // person is in, and it would be saved as that space's.
+  save() {
+    this.saved = this.snapshot();
+    setShared(STATE, this.saved);
+  }
+
+  // What a space that never had any state starts with: the same picture the
+  // panel opens on anywhere.
+  freshState() {
+    this.status = "open";
+    this.picked = new Map();
+    this.selected = null;
+    this.trail = [];
+    this.collapsed = new Set();
+  }
+
+  // Read the key, and when it holds something this copy did not write or take
+  // in already, take it in: the state of the space arrived at, handed back by
+  // tab-host under the copy — asleep or awake — so waking into a space finds
+  // the view it was left in. null, or nothing, or something unreadable, is a
+  // space that starts fresh. What the key names is the whole of the carried
+  // state: nothing of it lives anywhere else once this has run.
+  sync() {
+    let raw = shared(STATE);
+    // `shared` reads back what was set, but what it reads back as — string or
+    // already-parsed — is its own business: compare in one shape.
+    const text = raw == null ? null : typeof raw === "string" ? raw : JSON.stringify(raw);
+    if (text === this.saved) return;
+    this.saved = text;
+    if (text == null) return this.freshState();
+    try {
+      const s = typeof raw === "string" ? JSON.parse(raw) : raw;
+      if (!s || typeof s !== "object") return this.freshState();
+      if (STATUSES.some((x) => x.value === s.status)) this.status = s.status;
+      if (typeof s.selected === "string" || s.selected === null) this.selected = s.selected;
+      if (Array.isArray(s.trail)) this.trail = s.trail.filter((u) => typeof u === "string");
+      if (Array.isArray(s.collapsed))
+        this.collapsed = new Set(s.collapsed.filter((u) => typeof u === "string"));
+      if (Array.isArray(s.picked)) {
+        const picked = new Map();
+        for (const e of s.picked) {
+          if (!e || typeof e.key !== "string" || !e.pick || typeof e.pick !== "object") continue;
+          if (e.pick.all === true) picked.set(e.key, undefined);
+          else if (e.pick.none === true) picked.set(e.key, null);
+          else if (typeof e.pick.branch === "string" && e.pick.branch) picked.set(e.key, e.pick.branch);
+        }
+        this.picked = picked;
+      }
+    } catch {
+      this.freshState();
+    }
+  }
+
   // Another space, another checkout or another folder is another place: the
-  // rows, the folds and the open issue belong to the old one and go with it.
-  // The branch filter is not state of the mod's — it follows the checkout (see
-  // automatic) — so a checkout is a filter change, not a read: nothing asked of
-  // kata would come back different. `fresh` also forgets which project the
+  // rows, the folds and the open issue belong to the old one and go with it —
+  // though the folds, the open issue, the trail and the filters come back out
+  // of the shared key (see sync), which tab-host keeps per space, so what the
+  // arriving space was left showing is what it shows again. The branch
+  // *default* is not state of the mod's — it follows the checkout (see
+  // automatic) — so a checkout is a filter change, not a read: nothing asked
+  // of kata would come back different. `fresh` also forgets which project the
   // place is, which is what the button does and the timer does not: a project
   // appears when someone runs `kata init`, and that is worth re-asking for on a
   // click rather than on every read.
@@ -453,15 +547,24 @@ export default class Kata extends View {
       // goes with it. A re-read of the same place (↻, the 15 s timer) keeps
       // them, because the person is still looking for the same thing.
       if (moved) this.clearSearch();
-      this.collapsed = new Set();
-      this.selected = null;
-      this.trail = [];
       this.ancestors.clear();
       this.total = null;
       this.truncated = false;
       this.ceiling = LIMIT;
       this.failure = null;
       this.missing = false;
+      // The carried state is the arriving space's now, whatever the key holds
+      // — or a fresh start where it holds nothing. The timer can run this, so
+      // nothing is written here: the write is the panel's own doing, a click.
+      this.sync();
+      // A re-read of the same place (↻) drops the folds and the open issue the
+      // way it always did — the person asked for the list again, not for their
+      // view of it back — and the click that pressed it saves that.
+      if (!moved) {
+        this.selected = null;
+        this.trail = [];
+        this.collapsed = new Set();
+      }
     } else if (branched) {
       // Another branch is another set of tasks, and another set of parents above
       // them: the list is the same read, but what it needs over it is not.
@@ -831,12 +934,14 @@ export default class Kata extends View {
     this.collapsed = this.collapsed.size > 0
       ? new Set()
       : new Set(this.rows().filter((e) => e.kids > 0).map((e) => e.issue.uid));
+    this.save();
     cx.notify();
   }
 
   toggle(uid, cx) {
     if (this.collapsed.has(uid)) this.collapsed.delete(uid);
     else this.collapsed.add(uid);
+    this.save();
     cx.notify();
   }
 
@@ -851,12 +956,14 @@ export default class Kata extends View {
     if (this.selected) this.trail.push(this.selected);
     else this.trail = [];
     this.selected = uid;
+    this.save();
     cx.notify();
   }
 
   // One step back along the trail, which ends at the tree.
   back(cx) {
     this.selected = this.trail.pop() ?? null;
+    this.save();
     cx.notify();
   }
 
@@ -864,6 +971,7 @@ export default class Kata extends View {
   dismiss(cx) {
     this.trail = [];
     this.selected = null;
+    this.save();
     cx.notify();
   }
 
@@ -923,7 +1031,7 @@ export default class Kata extends View {
       .when(foldable && this.collapsed.size === 0, (el) => el
         .child(this.iconButton("kata-fold", "fold", "Collapse all", (_e, cx) => this.toggleAll(cx))))
       .child(this.iconButton("kata-refresh", "refresh", "Read the list again",
-        (_e, cx) => this.refresh(cx, true), this.loading));
+        (_e, cx) => { this.refresh(cx, true); this.save(); }, this.loading));
   }
 
   // Another status is another read. The pill above and the row an empty search
@@ -936,6 +1044,7 @@ export default class Kata extends View {
     this.trail = [];
     this.selected = null;
     this.branchOpen = false;
+    this.save();
     this.read(cx);
   }
 
@@ -988,6 +1097,7 @@ export default class Kata extends View {
       // Kept for this checkout only: another branch's checkout is another answer.
       this.picked.set(this.key(), value);
       this.branchOpen = false;
+      this.save();
       cx.notify();
       this.needParents(cx);
     };
@@ -1161,7 +1271,7 @@ export default class Kata extends View {
     const escape = chosen !== undefined && !this.picked.has(this.key())
       ? h_flex().id("kata-empty-escape").h(24).flex_none().pr(8).gap(6).rounded(6).items_center()
         .cursor_pointer().hover((s) => s.bg(t.hover))
-        .on_click((_e, cx) => { this.picked.set(this.key(), undefined); cx.notify(); })
+        .on_click((_e, cx) => { this.picked.set(this.key(), undefined); this.save(); cx.notify(); })
         .child(svg(`${ICONS}/branch.svg`).size(11).flex_none().text_color(t.dim))
         .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted)
           .child("Every branch"))
@@ -1286,7 +1396,7 @@ export default class Kata extends View {
     const kids = this.kids(i.uid);
     const back = h_flex().id("kata-back").h(28).flex_none().mx(6).px(8).gap(4).rounded(6).items_center()
       .cursor_pointer().hover((s) => s.bg(t.hover))
-      .on_click((_e, cx) => { this.selected = null; cx.notify(); })
+      .on_click((_e, cx) => { this.selected = null; this.save(); cx.notify(); })
       .child(svg(`${ICONS}/chevron-left.svg`).size(11).flex_none().text_color(t.dim))
       .child(div().text_size(11.5).text_color(t.muted).child("All issues"));
     // The ref, what state it is in, and its priority: the three things that say
@@ -1333,6 +1443,10 @@ export default class Kata extends View {
   }
 
   render(cx) {
+    // The key may have changed hands since this copy last looked — a space
+    // arrived at while this panel was showing — so every render takes in what
+    // it does not recognize before drawing a thing.
+    this.sync();
     const t = theme();
     const root = v_flex().id("root").size_full().min_h(0).overflow_hidden()
       .rounded(10).bg(t.background).border_1().border_color(t.border)

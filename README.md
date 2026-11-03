@@ -29,6 +29,7 @@ manifest is the whole contract.
   "tab": {
     "title": "Kata",
     "icon": "mods/kata/icon.svg",
+    "state": "kata.state",
     "show": "command -v kata >/dev/null 2>&1"
   }
 }
@@ -40,6 +41,7 @@ manifest is the whole contract.
 | `title` | The name Herdr lists the mod under. |
 | `tab.title` | The button's label. |
 | `tab.icon` | The button's glyph; `*.svg` draws tinted with the text color. |
+| `tab.state` | The `shared()` key (`kata.state`) the panel keeps what the space was left showing in: the status and branch filters, the open issue and the trail behind it, the folded rows. tab-host holds one value of it per space, so switching spaces hands the arriving one its own back — the Kata tab picks up where that space left off, and a space never visited starts fresh. Written only from the panel's own doings (clicks, picks); the search field and the open branch chooser are this minute's doings and stay out of it. |
 | `tab.show` | A shell string, run as `sh -c` in the shown space's folder on that space's machine; exit 0 draws the button. Only spaces whose machine has `kata` get a Kata tab, rather than one that could only say so. |
 
 ## What it shows
@@ -131,8 +133,9 @@ the search field is the one deliberate exception.
 ## Files
 
 - `mods/kata/main.js` — one `View`: place resolution, the read, the tree, the
-  search, the trail between issues, the drawing. No state lives outside the
-  copy.
+  search, the trail between issues, the drawing. The copy holds nothing that
+  has to survive it: what a space was left showing lives in the shared key
+  `kata.state`, which tab-host keeps per space.
 - `mods/kata/mod.json` — the manifest, quoted verbatim above.
 - `mods/kata/*.svg` — the tab icon and the panel's icons, all one-color so
   they tint with the theme.

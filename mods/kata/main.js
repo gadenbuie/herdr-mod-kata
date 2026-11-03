@@ -25,7 +25,7 @@
 //
 // Which project is "the space's" is decided in this order, and the panel says
 // which one it landed on:
-//   1. the `kata.toml` binding at or above the folder the space's focused pane
+//   1. the `.kata.toml` binding at or above the folder the space's focused pane
 //      is in — kata's own answer, so `kata tui` there shows the same issues;
 //   2. a project named after the folder's git repo (its `origin` remote), which
 //      is the name a kata binding usually gets;
@@ -61,7 +61,7 @@ function bigger(n) {
 // The metadata key kata's own examples use for the branch a task belongs to
 // (`kata create … --meta work.branch=audit-tokens`).
 const BRANCH = "work.branch";
-// How far up the folder is searched for a `kata.toml`. Twelve levels is deeper
+// How far up the folder is searched for a `.kata.toml`. Twelve levels is deeper
 // than any checkout and shallow enough to stay four cheap reads.
 const UP = 12;
 // The names a repo's own branch has when `origin/HEAD` cannot be asked.
@@ -91,7 +91,7 @@ function placeOf(space) {
 
 const activeSpace = () => spaces().find((s) => s.active) ?? null;
 
-// The project a `kata.toml` names, walking up from `folder`. The file is a few
+// The project a `.kata.toml` names, walking up from `folder`. The file is a few
 // lines of TOML (`[project]` with `name = "…"`), so it is read as text rather
 // than parsed: the one key this panel needs is the one it looks for.
 async function tomlProject(folder, on) {

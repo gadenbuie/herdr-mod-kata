@@ -1,11 +1,12 @@
 # Kata
 
-A **Kata** button in the tab bar — beside Files and Changes — opens a tab in
-the side panel that shows the space's kata issues as a tree: the work that is
-open, which task belongs under which, and a detail view per issue, with a
-status filter, a branch filter, a search over ids, titles and bodies, and
-foldable parents. It is a window onto the same list `kata tui` shows, sized
-the way a 368 px side panel can take it.
+A panel of the space's kata issues, shown as a tree: the open work, each
+task under its parent, and a detail view for any issue. Status and branch
+filters narrow the list, a search covers ids, titles and bodies, and parents
+fold. It doesn't write anything; claims, closes and comments belong to
+`kata tui` in a terminal, and this shows the same list. On its own it is a
+panel. With tab-host it also becomes a tab: a **Kata** button beside Files
+and Changes opens it in the side panel.
 
 ![Kata](preview.png)
 

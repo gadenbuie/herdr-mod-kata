@@ -1,13 +1,14 @@
 # Kata
 
-The space's [kata](https://katatracker.com) issues as a read-only tree in the
-[Herdr](https://herdr.dev) side panel (`herdr-app`; written against 0.1.12): a
-**Kata** button beside Files and Changes opens a tab that shows the open work
-of the project you are in — which task belongs under which, a status filter,
-a branch filter that follows the checkout, a search over ids, titles and
-bodies, and a detail view per issue. It writes nothing: no claim, no close, no
-comment, no edit — `kata tui` in a terminal is where the writing happens; this
-is the window onto the same list while you work.
+A [Herdr](https://herdr.dev) panel (`herdr-app`; written against 0.1.12) that
+shows the space's [kata](https://katatracker.com) issues as a read-only tree:
+the open work of the project you are in, which task belongs under which, with a
+status filter, a branch filter that follows the checkout, a search over ids,
+titles and bodies, and a detail view per issue. It doesn't write anything; the
+writing happens in `kata tui` in a terminal. With the
+[tab-host](https://github.com/gadenbuie/herdr-mod-tab-host) mod it also gets a
+**Kata** button beside Files and Changes, which opens it as a tab in the side
+panel.
 
 ![Kata: the space's issues as a tree in the side panel](preview.png)
 

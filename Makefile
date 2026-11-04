@@ -3,12 +3,19 @@
 # (the same recipe herdr-mod-plannotator's preview uses).
 CHROME ?= /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
 
+.DEFAULT_GOAL := help
+
+.PHONY: help
+help: ## Show this help.
+	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##//'
+
 # Where Herdr (0.1.12) looks for mods. It does not run a mod behind a
 # symlink, so installing is a copy — tab-host watches mods/ and the
 # Kata button appears the moment it lands.
 DEST ?= $(HOME)/.config/herdr-app/mods/kata
+
 .PHONY: preview
-preview: preview.png
+preview: preview.png ## Render assets/preview.html to preview.png (1600×1000).
 
 preview.png: assets/preview.html
 	@test -x "$(CHROME)" || { echo "make: no Chrome at $(CHROME) (set CHROME=... to override)"; exit 1; }
@@ -22,6 +29,6 @@ preview.png: assets/preview.html
 	@sips -g pixelWidth -g pixelHeight preview.png | tail -2
 
 .PHONY: install
-install:
+install: ## Copy mods/kata into Herdr's mods folder and check it.
 	rsync -rlpt --delete mods/kata/ $(DEST)/
 	herdr-app check $(DEST)

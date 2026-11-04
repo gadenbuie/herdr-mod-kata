@@ -23,7 +23,7 @@
     --done: #76a8ff;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 800px; height: 500px; overflow: hidden; }
+  html, body { width: 1280px; height: 800px; overflow: hidden; }
   body {
     background: var(--chrome);
     color: var(--fg);
@@ -32,37 +32,36 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 26px 44px 22px;
+    padding: 60px 72px 66px;
   }
-  .wordmark { display: flex; align-items: center; gap: 8px; height: 16px; }
-  .wordmark .dots { display: flex; gap: 5px; }
-  .wordmark .dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--raised); }
-  .wordmark .dots i:last-child { background: var(--accent); }
-  .wordmark .name { font-size: 12.5px; font-weight: 650; letter-spacing: 0.01em; color: var(--fg); }
-  .wordmark .tag { font-size: 11.5px; color: var(--muted); }
+  .wordmark { display: flex; align-items: center; gap: 10px; height: 24px; }
+  .wordmark svg { display: block; }
+  .wordmark .name { font-size: 16px; font-weight: 650; letter-spacing: 0.01em; color: var(--fg); }
+  .wordmark .tag { font-size: 15px; color: var(--muted); }
   h1 {
-    margin-top: 13px;
-    font-size: 46px;
+    margin-top: 48px;
+    font-size: 62px;
     font-weight: 700;
     letter-spacing: -0.025em;
     line-height: 1.04;
     text-align: center;
   }
-  h1 .tree { color: var(--accent); }
+  h1 .accent { color: var(--accent); }
   p.pitch {
-    margin-top: 10px;
-    max-width: 620px;
-    font-size: 13.5px;
-    line-height: 1.4;
+    margin-top: 26px;
+    max-width: 900px;
+    font-size: 18.5px;
+    line-height: 1.45;
     color: var(--muted);
     text-align: center;
-    text-wrap: balance;
   }
   p.pitch strong { color: var(--tfg); font-weight: 550; }
 
   /* ── the window mock: the Kata tab, and the panel it opens ── */
+  /* zoomed 1.25× to hold the plannotator stage's type scale */
   .window {
-    margin-top: 18px;
+    margin-top: 22px;
+    zoom: 1.25;
     width: 712px;
     border-radius: 10px;
     background: var(--surface);
@@ -190,23 +189,29 @@
   .mark { width: 4px; height: 4px; border-radius: 99px; background: var(--dim); flex: none; }
   .mark.blocked { background: var(--amber); }
 
-  .caption {
-    margin-top: 14px;
-    font-size: 11px;
-    color: var(--dim);
-    text-align: center;
+  footer {
+    margin-top: auto;
+    display: flex; align-items: center; gap: 12px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13px; color: var(--dim);
   }
-  .caption .repo { color: var(--muted); }
+  footer .slug { color: var(--muted); }
 </style>
 </head>
 <body>
   <div class="wordmark">
-    <span class="dots"><i></i><i></i><i></i></span>
+    <svg width="44" height="14" viewBox="0 0 44 14" aria-hidden="true">
+      <rect x="0" y="1" width="12" height="12" rx="3" fill="#2c2e31"/>
+      <rect x="16" y="1" width="12" height="12" rx="3" fill="#2c2e31"/>
+      <rect x="32" y="1" width="12" height="12" rx="3" fill="#96b2d7"/>
+    </svg>
     <span class="name">Kata</span>
     <span class="tag">· a Herdr mod</span>
   </div>
-  <h1>Every task in its <span class="tree">tree.</span></h1>
-  <p.pitch>Kata issues beside Files and Changes: <strong>status, branch and search over one read-only list.</strong></p.pitch>
+
+  <h1><span class="accent">Kata</span>, every task in its tree.</h1>
+
+  <p class="pitch">Kata issues in your Herdr workspace: <strong>status, branch and search over one read-only list.</strong></p>
 
   <div class="window">
     <div class="tabbar">
@@ -312,6 +317,6 @@
     </div>
   </div>
 
-  <p class="caption"><span class="repo">gadenbuie/herdr-mod-kata</span> · MIT</p>
+  <footer><span class="slug">gadenbuie/herdr-mod-kata</span><span>·</span><span>MIT</span></footer>
 </body>
 </html>

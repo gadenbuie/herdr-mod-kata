@@ -101,9 +101,12 @@ installing is a copy:
 ```sh
 git clone https://github.com/gadenbuie/herdr-mod-kata.git
 cd herdr-mod-kata
-rsync -rlpt --delete mods/kata/ ~/.config/herdr-app/mods/kata/
-herdr-app check ~/.config/herdr-app/mods/kata
+make install
 ```
+
+That is `rsync -rlpt --delete mods/kata/ ~/.config/herdr-app/mods/kata/`
+followed by `herdr-app check` on the copy (set `DEST=` to install
+somewhere else).
 
 tab-host watches `mods/`, so the **Kata** button appears at the right end of
 the tab bar the moment the copy lands, and both the button and the panel go

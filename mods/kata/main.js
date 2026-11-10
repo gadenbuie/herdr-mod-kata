@@ -1371,6 +1371,13 @@ export default class Kata extends View {
     this.hideDone = !spec.uid;
     this.gIssues = null;
     this.gError = null;
+    // The graph window is the panel's class opened with a different prop, and
+    // `init` returns here before the panel's fields are made — but the state
+    // helpers the cards share (`isBlocked`, through `kids`) still read them.
+    // The graph carries its own read, so the fields point at it once it lands;
+    // before that no card is drawn and nothing asks. Empty until then.
+    this.issues = [];
+    this.ancestors = new Map();
     // The viewport: where the canvas's top-left sits in it and how big a pixel
     // of the canvas is. `placing` says what the next render should frame —
     // the focused issue, or the whole graph — once the viewport's size is known.
@@ -1386,7 +1393,12 @@ export default class Kata extends View {
       // is a view of the read rather than another one.
       const out = await listIssues(spec.folder, spec.on, "all", spec.project, 0);
       if (out.error) this.gError = out.error;
-      else this.gIssues = out.issues;
+      else {
+        this.gIssues = out.issues;
+        // A whole-project read at "all": the same list `isBlocked` wants, so
+        // a card's dot and tooltip say what the panel's row would.
+        this.issues = out.issues;
+      }
       cx.notify();
     });
   }

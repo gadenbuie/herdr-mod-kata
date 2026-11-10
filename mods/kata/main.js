@@ -227,6 +227,7 @@ function normalize(i) {
     priority: typeof i.priority === "number" ? i.priority : null,
     labels: (i.labels ?? []).map(String),
     branch: branchOf(i.metadata),
+    meta: i.metadata && typeof i.metadata === "object" ? i.metadata : {},
     parent: i.parent?.uid ?? null,
     created: Date.parse(i.created_at) || 0,
     updated: Date.parse(i.updated_at) || 0,
@@ -369,8 +370,56 @@ function snippet(body, q, width = 84) {
   return `${from > 0 ? "…" : ""}${cut}${from + width < text.length ? "…" : ""}`;
 }
 
+// ---- comments and metadata ----
+
+// One issue's comments, asked for with `kata show` when the detail view opens
+// it: the list carries the issue and its links but never the thread. A refusal
+// is a thread the panel cannot show, and says so in place of the comments.
+async function readComments(folder, on, uid, project) {
+  const args = ["show", uid, "--json"];
+  if (project) args.push("--project", project);
+  let r;
+  try {
+    r = await exec("kata", args, { cwd: folder, on });
+  } catch {
+    return { error: "kata is not installed here, or it cannot start" };
+  }
+  if (r.code !== 0) return { error: refusal(r) };
+  try {
+    const data = JSON.parse(r.stdout);
+    const comments = (data?.comments ?? []).map((c) => ({
+      id: String(c.uid ?? c.id ?? ""),
+      author: c.author ?? "",
+      teammate: c.teammate ?? null,
+      body: String(c.body ?? ""),
+      at: Date.parse(c.created_at) || 0,
+    }));
+    return { comments, truncated: data?.comments_truncated === true };
+  } catch {
+    return { error: "kata answered in a shape this panel cannot read" };
+  }
+}
+
+// Metadata is a bag of keys anyone can write. The panel already draws the one it
+// understands (`work.branch`, as Branch), so the rest is what this lists: every
+// other key, in name order, its value as written — text as text, anything
+// structured as one line of JSON.
+function metaRows(meta) {
+  return Object.keys(meta ?? {})
+    .filter((k) => k !== BRANCH)
+    .sort()
+    .map((k) => {
+      const v = meta[k];
+      return { key: k, value: typeof v === "string" ? v : JSON.stringify(v) };
+    });
+}
+
 export default class Kata extends View {
   init(_props, cx) {
+    // The threads and fields `kata show` adds to the list's rows, by uid:
+    // { comments, truncated } | { error }, kept while a new ask is in flight.
+    this.details = new Map();
+    this.asking = new Set();
     // What the shared state key held as this copy last saw it — the string it
     // wrote, or the one it took in — so a render can tell a space's own value
     // arriving from the value this copy put there. Nothing yet: the first
@@ -434,6 +483,7 @@ export default class Kata extends View {
     // space, a folder, a checkout — and asks again then. Nothing is redrawn
     // unless it did.
     cx.timer.every(1000, (cx) => {
+      this.ensureDetail(cx);
       const at = this.place();
       if (at.folder !== this.origin?.folder || at.on !== this.origin?.on
         || at.branch !== this.origin?.branch) this.refresh(cx);
@@ -645,6 +695,8 @@ export default class Kata extends View {
       this.trail = this.trail.filter((uid) => known.has(uid));
       if (this.selected && !known.has(this.selected)) this.selected = null;
       settle(cx);
+      // A new read is a new look at the open issue's thread too.
+      if (this.selected) this.ensureDetail(cx, true);
       // The rows land first, and then their parents are asked for: a task whose
       // parent the read did not carry stands alone for a moment, then moves
       // under it. Nothing waits on the fetch, so a slow daemon shows the list.
@@ -957,6 +1009,7 @@ export default class Kata extends View {
     else this.trail = [];
     this.selected = uid;
     this.save();
+    this.ensureDetail(cx);
     cx.notify();
   }
 
@@ -964,6 +1017,7 @@ export default class Kata extends View {
   back(cx) {
     this.selected = this.trail.pop() ?? null;
     this.save();
+    this.ensureDetail(cx);
     cx.notify();
   }
 
@@ -979,6 +1033,68 @@ export default class Kata extends View {
   // the one the last step came from.
   cameFrom() {
     return this.trail.length > 0 ? this.by(this.trail[this.trail.length - 1]) : null;
+  }
+
+  // ---- the open issue's thread ----
+
+  // The comments of the issue the detail view shows. Asked for when one opens
+  // (`open`, `back`, a restored space) and again with each full read, so a
+  // comment an agent just wrote shows up within a refresh; the old thread stays
+  // on screen while the new one is on its way.
+  ensureDetail(cx, force = false) {
+    const uid = this.selected;
+    const folder = this.origin?.folder;
+    if (!uid || !folder || !this.resolved || this.resolved.missing) return;
+    if (this.asking.has(uid) || (!force && this.details.has(uid))) return;
+    const origin = this.origin;
+    const scope = this.resolved.bound ? null : this.resolved.name;
+    this.asking.add(uid);
+    cx.spawn(async (cx) => {
+      const out = await readComments(origin.folder, origin.on, uid, scope);
+      this.asking.delete(uid);
+      // Another place is another project's threads.
+      if (origin.folder !== this.origin?.folder || origin.on !== this.origin?.on) return;
+      this.details.set(uid, out);
+      cx.notify();
+    });
+  }
+
+  // The thread as the detail view draws it: a header with the count, then each
+  // comment as its author, its age and its markdown.
+  thread(i) {
+    const t = theme();
+    const d = this.details.get(i.uid);
+    const head = (text) => div().text_size(11).text_color(t.dim).child(text);
+    if (!d) return v_flex().gap(4).pt(6).child(head("Comments")).child(div().text_size(11).text_color(t.dim).child("Reading…"));
+    if (d.error) {
+      return v_flex().gap(4).pt(6).child(head("Comments"))
+        .child(div().text_size(11).text_color(t.blocked).child(d.error));
+    }
+    return v_flex().gap(6).pt(6)
+      .child(head(d.comments.length ? `Comments (${d.comments.length})` : "Comments"))
+      .when(d.comments.length === 0, (el) => el.child(div().text_size(11).text_color(t.dim).child("No comments.")))
+      .children(d.comments.map((c, n) => v_flex().gap(3).p(8).rounded(6).bg(t.raised)
+        .child(h_flex().gap(6).items_center()
+          .child(div().text_size(11).font_semibold().text_color(t.muted)
+            .child(c.teammate ? `${c.author}/${c.teammate}` : c.author || "unknown"))
+          .child(div().text_size(10.5).text_color(t.dim).child(ago(c.at) || ""))
+          .child(div().flex_1()))
+        .child(TextView.markdown(`kata-comment-${i.uid}-${c.id || n}`, c.body || "_Empty comment._"))))
+      .when(d.truncated, (el) => el.child(div().text_size(10.5).text_color(t.dim)
+        .child("kata cut the thread short; `kata show` has the rest.")));
+  }
+
+  // The metadata the panel has no row of its own for.
+  metadata(i) {
+    const t = theme();
+    const rows = metaRows(i.meta);
+    if (!rows.length) return null;
+    return v_flex().gap(3).pt(6)
+      .child(div().text_size(11).text_color(t.dim).child("Metadata"))
+      .child(v_flex().gap(4).p(8).rounded(6).bg(t.raised)
+        .children(rows.map((r) => v_flex().gap(1)
+          .child(div().text_size(10.5).text_color(t.dim).child(r.key))
+          .child(div().text_size(11.5).text_color(t.muted).child(r.value)))));
   }
 
   // ---- pieces ----
@@ -1433,12 +1549,14 @@ export default class Kata extends View {
       .child(top)
       .child(div().text_size(13.5).font_semibold().text_color(t.foreground).child(i.title))
       .child(meta)
+      .when(i.blocks.length > 0, (el) => el.child(this.chips("Blocks", i.blocks, cx)))
+      .when(i.blockedBy.length > 0, (el) => el.child(this.chips("Blocked by", i.blockedBy, cx)))
+      .when(i.related.length > 0, (el) => el.child(this.chips("Related", i.related, cx)))
       // The description is kata's own markdown, drawn as markdown: it is where
       // the work, the plan and the requirements usually are.
       .child(div().pt(4).child(TextView.markdown(`kata-body-${i.uid}`, i.body || "_No description._")))
-      .when(i.blocks.length > 0, (el) => el.child(this.chips("Blocks", i.blocks, cx)))
-      .when(i.blockedBy.length > 0, (el) => el.child(this.chips("Blocked by", i.blockedBy, cx)))
-      .when(i.related.length > 0, (el) => el.child(this.chips("Related", i.related, cx)));
+      .children([this.metadata(i)].filter(Boolean))
+      .child(this.thread(i));
     return v_flex().id("kata-detail").w_full().flex_none().pb(16).child(this.nav(cx)).child(body);
   }
 

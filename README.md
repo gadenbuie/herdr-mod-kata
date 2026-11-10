@@ -64,6 +64,10 @@ manifest is the whole contract.
   parent and children as chips, blocks/blocked-by/related, and the body as
   rendered markdown. Following chips leaves a trail; `‹` walks it back naming
   each issue, `All issues` returns to the tree.
+- **Metadata and comments** in the detail view: every metadata key but
+  `work.branch` (which is the Branch row) as a key and its value, and the
+  issue's comments, oldest first, with author, age and rendered markdown. The
+  thread comes from `kata show` when an issue opens and again on each refresh.
 - **Honest empty states**: a folder with no kata project says so and shows the
   `kata init` that would bind it; a read that stopped at its ceiling says
   `N of M` and offers **Load more**; a space on a machine without `kata` says

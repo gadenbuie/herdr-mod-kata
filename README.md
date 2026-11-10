@@ -68,6 +68,12 @@ manifest is the whole contract.
   `work.branch` (which is the Branch row) as a key and its value, and the
   issue's comments, oldest first, with author, age and rendered markdown. The
   thread comes from `kata show` when an issue opens and again on each refresh.
+- **The graph**: the graph button in the detail header opens a window over the
+  app with that issue's neighbourhood — parent, blocks and related links, one
+  to three hops out (`Hide done` drops closed issues) — laid out in columns,
+  blockers and parents to the left. Clicking a node opens that issue in the
+  panel and closes the window. It is this same mod opened with `openOverlay`,
+  so it needs nothing in `mod.json`.
 - **Honest empty states**: a folder with no kata project says so and shows the
   `kata init` that would bind it; a read that stopped at its ceiling says
   `N of M` and offers **Load more**; a space on a machine without `kata` says

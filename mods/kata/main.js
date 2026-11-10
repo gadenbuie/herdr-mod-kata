@@ -31,9 +31,9 @@
 //      is the name a kata binding usually gets;
 //   3. nothing: a space with no kata project says so, and says what to run.
 
-import { View, div, svg } from "gpui-kit";
+import { View, div, svg, PathBuilder } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState, TextView } from "gpui-base";
-import { spaces, focused, panes, exec, theme, readTextFile, appHome, shared, setShared } from "herdr";
+import { spaces, focused, panes, exec, theme, readTextFile, appHome, shared, setShared, props, openOverlay, closeOverlay } from "herdr";
 
 const ICONS = "mods/kata";
 // The status filter's buttons, in the order they draw: what is left to do first.
@@ -414,8 +414,200 @@ function metaRows(meta) {
     });
 }
 
+// ---- the graph ----
+
+const NODE_W = 196;
+const NODE_H = 42;
+const GAP_X = 72;
+const GAP_Y = 14;
+const PAD = 28;
+const MIN_ZOOM = 0.15;
+const MAX_ZOOM = 2.5;
+// The most issues the whole-project graph draws: past this the canvas is a hairball.
+const ALL_NODES = 300;
+
+// What the graph shows of an issue's neighbourhood: every issue within `depth`
+// hops of `focus` along parent, blocks and related links, in either direction,
+// read out of the one list the overlay asked for. An issue a link names that
+// the list did not carry is a stub — its ref and status are all there is.
+function neighbourhood(issues, focus, depth, hideDone) {
+  const byUid = new Map(issues.map((i) => [i.uid, i]));
+  const stubs = new Map();
+  const edges = [];
+  const seen = new Set();
+  const add = (from, to, kind) => {
+    if (!from || !to || from === to) return;
+    const key = kind === "related" ? `r:${[from, to].sort().join(":")}` : `${kind}:${from}:${to}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    edges.push({ from, to, kind });
+  };
+  const stub = (r) => {
+    if (r?.uid && !byUid.has(r.uid) && !stubs.has(r.uid)) {
+      stubs.set(r.uid, { uid: r.uid, ref: r.ref ?? "", title: "", status: r.status ?? "open", closed: r.status === "closed", stub: true });
+    }
+  };
+  for (const i of issues) {
+    if (i.parent) add(i.parent, i.uid, "parent");
+    for (const r of i.blocks) { add(i.uid, r.uid, "blocks"); stub(r); }
+    for (const r of i.blockedBy) { add(r.uid, i.uid, "blocks"); stub(r); }
+    for (const r of i.related) { add(i.uid, r.uid, "related"); stub(r); }
+  }
+  const node = (uid) => byUid.get(uid) ?? stubs.get(uid) ?? (uid === focus ? null : { uid, ref: "", title: "", status: "open", closed: false, stub: true });
+  const adj = new Map();
+  for (const e of edges) {
+    for (const [a, b] of [[e.from, e.to], [e.to, e.from]]) {
+      if (!adj.has(a)) adj.set(a, []);
+      adj.get(a).push(b);
+    }
+  }
+  if (!focus) {
+    // No focus is the whole project: every issue with a link to another, newest
+    // read first, up to a ceiling a canvas can still draw.
+    let nodes = [...adj.keys()].map(node).filter((n) => n && !(hideDone && n.closed));
+    const over = Math.max(0, nodes.length - ALL_NODES);
+    nodes = nodes.slice(0, ALL_NODES);
+    const kept = new Set(nodes.map((n) => n.uid));
+    return { nodes, edges: edges.filter((e) => kept.has(e.from) && kept.has(e.to)), over };
+  }
+  // Breadth first from the focus, so the order the nodes are found in is the
+  // order they start out in, and `hops` is how far each one is.
+  const hops = new Map([[focus, 0]]);
+  const order = [focus];
+  for (let n = 0; n < order.length; n++) {
+    const uid = order[n];
+    if (hops.get(uid) >= depth) continue;
+    for (const other of adj.get(uid) ?? []) {
+      if (hops.has(other)) continue;
+      const o = node(other);
+      // A closed issue hides, and so does everything only reachable through it.
+      if (hideDone && o?.closed) continue;
+      hops.set(other, hops.get(uid) + 1);
+      order.push(other);
+    }
+  }
+  const nodes = order.map(node).filter(Boolean);
+  const kept = new Set(nodes.map((n) => n.uid));
+  return { nodes, edges: edges.filter((e) => kept.has(e.from) && kept.has(e.to)), hops, over: 0 };
+}
+
+// Columns left to right: what must come first is on the left. A parent sits
+// before its children and a blocker before what it blocks; `related` carries no
+// direction, so an issue with only those is set one column after the one that
+// led to it. Within a column the order is swept toward the neighbours' average
+// height a few times, which is enough to untangle the small graphs this draws.
+function layout(graph, focus) {
+  const { nodes, edges } = graph;
+  const rank = new Map(nodes.map((n) => [n.uid, 0]));
+  const directed = edges.filter((e) => e.kind !== "related");
+  // Bounded rather than to a fixed point: a cycle never settles.
+  for (let pass = 0; pass < nodes.length; pass++) {
+    let moved = false;
+    for (const e of directed) {
+      if (rank.get(e.to) < rank.get(e.from) + 1 && rank.get(e.from) < nodes.length) {
+        rank.set(e.to, rank.get(e.from) + 1);
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  const touched = new Set(directed.flatMap((e) => [e.from, e.to]));
+  const settled = new Set(focus ? [...touched, focus] : touched);
+  const loose = edges.filter((e) => e.kind === "related");
+  for (let pass = 0; pass < nodes.length * 2; pass++) {
+    let moved = false;
+    for (const e of loose) {
+      for (const [a, b] of [[e.from, e.to], [e.to, e.from]]) {
+        if (settled.has(a) && !settled.has(b)) {
+          rank.set(b, rank.get(a) + 1);
+          settled.add(b);
+          moved = true;
+        }
+      }
+    }
+    if (moved) continue;
+    // A group joined only by `related` has no start: its first issue is one.
+    const first = nodes.find((n) => !settled.has(n.uid));
+    if (!first) break;
+    settled.add(first.uid);
+  }
+  const low = Math.min(...rank.values());
+  const columns = [];
+  for (const n of nodes) {
+    const r = rank.get(n.uid) - low;
+    (columns[r] ??= []).push(n);
+  }
+  for (let c = 0; c < columns.length; c++) columns[c] ??= [];
+  const row = new Map();
+  columns.forEach((col) => col.forEach((n, k) => row.set(n.uid, k)));
+  const nbrs = new Map(nodes.map((n) => [n.uid, []]));
+  for (const e of edges) { nbrs.get(e.from).push(e.to); nbrs.get(e.to).push(e.from); }
+  for (let sweep = 0; sweep < 4; sweep++) {
+    for (const col of sweep % 2 ? [...columns].reverse() : columns) {
+      const mean = (n) => {
+        const ns = nbrs.get(n.uid);
+        return ns.length ? ns.reduce((s, u) => s + row.get(u), 0) / ns.length : row.get(n.uid);
+      };
+      col.sort((a, b) => mean(a) - mean(b));
+      col.forEach((n, k) => row.set(n.uid, k));
+    }
+  }
+  const tall = Math.max(1, ...columns.map((c) => c.length));
+  const pos = new Map();
+  columns.forEach((col, c) => {
+    // Columns are centred on the tallest one, so a short column reads as the
+    // middle of the thing it hangs from rather than the top of it.
+    const lift = ((tall - col.length) * (NODE_H + GAP_Y)) / 2;
+    col.forEach((n, k) => pos.set(n.uid, { x: PAD + c * (NODE_W + GAP_X), y: PAD + lift + k * (NODE_H + GAP_Y) }));
+  });
+  return {
+    pos,
+    width: PAD * 2 + columns.length * NODE_W + (columns.length - 1) * GAP_X,
+    height: PAD * 2 + tall * NODE_H + (tall - 1) * GAP_Y,
+  };
+}
+
+// The line an edge is drawn with, as a path in the viewport's pixels: `a` and
+// `b` are the cards' top-left corners already moved and scaled, `w` and `h` a
+// card's size at this zoom. A curve from the right edge of one card to the left
+// edge of the next, or a straight run down the side when both share a column.
+function edgePath(e, a, b, w, h, z) {
+  const dash = e.kind === "related";
+  let from;
+  let to;
+  let curve;
+  if (Math.abs(a.x - b.x) < 1) {
+    const down = b.y > a.y;
+    from = { x: a.x + w / 2, y: a.y + (down ? h : 0) };
+    to = { x: b.x + w / 2, y: b.y + (down ? 0 : h) };
+  } else {
+    const right = b.x > a.x;
+    from = { x: a.x + (right ? w : 0), y: a.y + h / 2 };
+    to = { x: b.x + (right ? 0 : w), y: b.y + h / 2 };
+    const bend = Math.abs(to.x - from.x) / 2;
+    curve = { ax: from.x + (right ? bend : -bend), bx: to.x - (right ? bend : -bend) };
+  }
+  let line = PathBuilder.stroke(Math.max(1, 1.4 * z));
+  if (dash) line = line.dash_array([4 * z, 3 * z]);
+  line = line.move_to(from.x, from.y);
+  line = curve ? line.cubic_bezier_to(to.x, to.y, curve.ax, from.y, curve.bx, to.y) : line.line_to(to.x, to.y);
+  // The head points the way the edge was running when it arrived.
+  const dx = curve ? Math.sign(to.x - from.x) : 0;
+  const dy = curve ? 0 : Math.sign(to.y - from.y);
+  const l = 8 * z;
+  const head = dash ? null : PathBuilder.fill().add_polygon([
+    [to.x, to.y],
+    [to.x - dx * l - dy * l / 2, to.y - dy * l + dx * l / 2],
+    [to.x - dx * l + dy * l / 2, to.y - dy * l - dx * l / 2],
+  ], true).build();
+  return { line: line.build(), head };
+}
+
 export default class Kata extends View {
   init(_props, cx) {
+    // The same mod is also the graph window: `openGraph` opens it as an overlay
+    // and hands it the issue to centre on, which is what tells the two apart.
+    if (props()?.graph) return this.initGraph(props().graph, cx);
     // The threads and fields `kata show` adds to the list's rows, by uid:
     // { comments, truncated } | { error }, kept while a new ask is in flight.
     this.details = new Map();
@@ -484,6 +676,7 @@ export default class Kata extends View {
     // unless it did.
     cx.timer.every(1000, (cx) => {
       this.ensureDetail(cx);
+      if (this.reread) { this.reread = false; this.read(cx); }
       const at = this.place();
       if (at.folder !== this.origin?.folder || at.on !== this.origin?.on
         || at.branch !== this.origin?.branch) this.refresh(cx);
@@ -551,7 +744,12 @@ export default class Kata extends View {
     try {
       const s = typeof raw === "string" ? JSON.parse(raw) : raw;
       if (!s || typeof s !== "object") return this.freshState();
-      if (STATUSES.some((x) => x.value === s.status)) this.status = s.status;
+      if (STATUSES.some((x) => x.value === s.status) && s.status !== this.status) {
+        // Another status is another list: a window that wrote it (the graph)
+        // asked for an issue this list does not hold, and the timer reads again.
+        this.status = s.status;
+        this.reread = true;
+      }
       if (typeof s.selected === "string" || s.selected === null) this.selected = s.selected;
       if (Array.isArray(s.trail)) this.trail = s.trail.filter((u) => typeof u === "string");
       if (Array.isArray(s.collapsed))
@@ -1097,6 +1295,252 @@ export default class Kata extends View {
           .child(div().text_size(11.5).text_color(t.muted).child(r.value)))));
   }
 
+  // ---- the graph window ----
+
+  // The graph is a window of its own because a graph wants the room a 368 px
+  // panel does not have, and because a node is something to click: it opens
+  // that issue in the panel and puts the window away.
+  openGraph(uid) {
+    // No uid is the whole project's graph.
+    if (!this.origin?.folder || !this.resolved || this.resolved.missing) return;
+    openOverlay({
+      mod: "kata",
+      kind: "dialog",
+      width: 0.9,
+      height: 0.85,
+      props: {
+        graph: {
+          uid: uid ?? null,
+          folder: this.origin.folder,
+          on: this.origin.on ?? null,
+          project: this.resolved.bound ? null : this.resolved.name,
+        },
+      },
+    });
+  }
+
+  initGraph(spec, cx) {
+    this.graph = spec;
+    // The whole project is too many issues for one-hop reading; one issue's
+    // neighbourhood starts at one hop, and the person opens it up.
+    this.depth = 1;
+    this.hideDone = !spec.uid;
+    this.gIssues = null;
+    this.gError = null;
+    // The viewport: where the canvas's top-left sits in it and how big a pixel
+    // of the canvas is. `placing` says what the next render should frame —
+    // the focused issue, or the whole graph — once the viewport's size is known.
+    this.vx = 0;
+    this.vy = 0;
+    this.vz = 1;
+    this.vsize = null;
+    this.placing = spec.uid ? "focus" : "fit";
+    this.dragFrom = null;
+    this.dragged = false;
+    cx.spawn(async (cx) => {
+      // Every status: the closed issues are part of the picture, and `hideDone`
+      // is a view of the read rather than another one.
+      const out = await listIssues(spec.folder, spec.on, "all", spec.project, 0);
+      if (out.error) this.gError = out.error;
+      else this.gIssues = out.issues;
+      cx.notify();
+    });
+  }
+
+  // A node was clicked: the panel is told by the one channel it has, the key
+  // that carries a space's view, and the window goes. The status goes to "all"
+  // when the issue is closed, because a panel on "open" would not know the
+  // issue and would drop it on its next read.
+  pickNode(n) {
+    if (this.dragged) return;
+    let state = {};
+    try {
+      const raw = shared(STATE);
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      if (parsed && typeof parsed === "object") state = parsed;
+    } catch { /* an unreadable key is a state to start over from */ }
+    state.selected = n.uid;
+    state.trail = [];
+    if (n.closed && state.status === "open") state.status = "all";
+    setShared(STATE, JSON.stringify(state));
+    closeOverlay(props().overlay);
+  }
+
+  // Frame the canvas in the viewport: on the focused card at full size, or the
+  // whole graph shrunk to fit. Runs from render, once the viewport has a size.
+  frame(L, focusPos) {
+    const v = this.vsize;
+    if (!v || !this.placing) return;
+    if (this.placing === "focus" && focusPos) {
+      this.vz = 1;
+      this.vx = v.width / 2 - (focusPos.x + NODE_W / 2);
+      this.vy = v.height / 2 - (focusPos.y + NODE_H / 2);
+    } else {
+      this.vz = Math.min(1, Math.max(MIN_ZOOM, Math.min((v.width - 32) / L.width, (v.height - 32) / L.height)));
+      this.vx = (v.width - L.width * this.vz) / 2;
+      this.vy = (v.height - L.height * this.vz) / 2;
+    }
+    this.placing = null;
+  }
+
+  // Zoom keeping the canvas point under (px, py) — the pointer, or the middle of
+  // the viewport — where it is.
+  zoomAt(factor, px, py, cx) {
+    const z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, this.vz * factor));
+    const k = z / this.vz;
+    this.vx = px - (px - this.vx) * k;
+    this.vy = py - (py - this.vy) * k;
+    this.vz = z;
+    cx.notify();
+  }
+
+  zoomMid(factor, cx) {
+    const v = this.vsize ?? { width: 0, height: 0 };
+    this.zoomAt(factor, v.width / 2, v.height / 2, cx);
+  }
+
+  graphCard(n, at, z, focus) {
+    const t = theme();
+    const w = NODE_W * z;
+    const h = NODE_H * z;
+    return div().id(`kata-node-${n.uid}`).absolute().left(at.x).top(at.y).w(w).h(h)
+      .px(8 * z).py(4 * z).rounded(7 * z).border_1()
+      .border_color(n.uid === focus ? t.foreground : t.border)
+      .bg(t.raised).cursor_pointer().hover((st) => st.bg(t.selected))
+      .flex().flex_col().justify_center().gap(1).overflow_hidden()
+      .on_click((_e, cx) => this.pickNode(n))
+      .child(h_flex().gap(5 * z).items_center()
+        .child(div().flex_none().text_size(10.5 * z).text_color(n.closed ? t.dim : t.muted).child(`#${n.ref}`))
+        .when(n.priority != null, (el) => el.child(div().flex_none().text_size(9.5 * z)
+          .text_color(priorityColor(t, n.priority)).child(`P${n.priority}`)))
+        .child(div().flex_1())
+        .when(n.closed, (el) => el.child(svg(`${ICONS}/check-circle.svg`).size(10 * z).flex_none().text_color(t.done))))
+      .child(div().min_w(0).truncate().text_size(11.5 * z)
+        .text_color(n.closed ? t.dim : t.foreground).child(n.stub ? "(not in this read)" : n.title));
+  }
+
+  graphBar(cx, focusIssue) {
+    const t = theme();
+    const pill = (id, label, on, action, tip) => div().id(id).h(22).flex_none().px(9).rounded(99).flex().items_center()
+      .text_size(11.5).cursor_pointer()
+      .when(on, (el) => el.bg(t.selected).text_color(t.foreground))
+      .when(!on, (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover)))
+      .when(Boolean(tip), (el) => el.tooltip(tip))
+      .on_click(action).child(label);
+    const key = (color, label) => h_flex().gap(4).items_center()
+      .child(div().w(14).h(0).border_t(2).border_color(color))
+      .child(div().text_size(10.5).text_color(t.dim).child(label));
+    const spot = this.graph.uid;
+    return h_flex().id("kata-graph-bar").h(42).flex_none().px(14).gap(6).items_center()
+      .border_b(1).border_color(t.border)
+      .child(div().font_semibold().child("Graph"))
+      .when(Boolean(focusIssue), (el) => el.child(div().min_w(0).max_w(300).truncate().text_size(11.5).text_color(t.muted)
+        .child(`#${focusIssue.ref} ${focusIssue.title}`)))
+      .when(!spot, (el) => el.child(div().text_size(11.5).text_color(t.muted).child("whole project")))
+      .child(div().flex_1())
+      .child(key(t.dim, "parent"))
+      .child(key(t.blocked, "blocks"))
+      .child(key(t.dim, "related"))
+      .child(div().w(6))
+      .when(Boolean(spot), (el) => el.children([1, 2, 3].map((d) => pill(`kata-depth-${d}`, `${d} hop${d > 1 ? "s" : ""}`,
+        this.depth === d, (_e, cx) => { this.depth = d; this.placing = "focus"; cx.notify(); }))))
+      .child(pill("kata-hide-done", this.hideDone ? "Show done" : "Hide done", false,
+        (_e, cx) => { this.hideDone = !this.hideDone; this.placing = spot ? "focus" : "fit"; cx.notify(); }))
+      .child(div().w(6))
+      .child(pill("kata-zoom-out", "−", false, (_e, cx) => this.zoomMid(1 / 1.25, cx), "Zoom out"))
+      .child(div().w(38).text_size(11).text_color(t.dim).flex().justify_center().child(`${Math.round(this.vz * 100)}%`))
+      .child(pill("kata-zoom-in", "+", false, (_e, cx) => this.zoomMid(1.25, cx), "Zoom in"))
+      .child(pill("kata-fit", "Fit", false, (_e, cx) => { this.placing = "fit"; cx.notify(); }, "Fit the whole graph in view"))
+      .when(Boolean(spot), (el) => el.child(pill("kata-focus", "Center", false,
+        (_e, cx) => { this.placing = "focus"; cx.notify(); }, "Back to the issue, at full size")))
+      .child(this.iconButton("kata-graph-close", "close", "Close the graph",
+        () => closeOverlay(props().overlay)));
+  }
+
+  renderGraph(cx) {
+    const t = theme();
+    const root = v_flex().id("root").size_full().min_h(0).overflow_hidden()
+      .text_size(13).text_color(t.foreground).bg(t.background);
+    const say = (text, color) => root.child(this.graphBar(cx, null))
+      .child(div().flex_1().flex().items_center().justify_center().text_size(12).text_color(color ?? t.dim).child(text));
+    if (this.gError) return say(this.gError, t.blocked);
+    if (!this.gIssues) return say("Reading kata…");
+    const spot = this.graph.uid;
+    const focusIssue = spot ? this.gIssues.find((i) => i.uid === spot) : null;
+    if (spot && !focusIssue) return say("That issue is not in this project's read.");
+    const g = neighbourhood(this.gIssues, spot, this.depth, this.hideDone);
+    if (!g.nodes.length) return say("No linked issues here.");
+    const L = layout(g, spot);
+    this.frame(L, spot ? L.pos.get(spot) : null);
+    const z = this.vz;
+    const w = NODE_W * z;
+    const h = NODE_H * z;
+    const v = this.vsize;
+    // What is on screen: a card or a line wholly outside the viewport is not
+    // built, so a big graph costs what is in view.
+    const seen = (x0, y0, x1, y1) => !v || (x1 > -20 && y1 > -20 && x0 < v.width + 20 && y0 < v.height + 20);
+    const at = (uid) => {
+      const p = L.pos.get(uid);
+      return { x: this.vx + p.x * z, y: this.vy + p.y * z };
+    };
+    const layer = (path, color, id) => window.paint_path(path, color).id(id).absolute().top(0).left(0).size_full();
+    const lines = [];
+    g.edges.forEach((e, k) => {
+      const a = at(e.from);
+      const b = at(e.to);
+      if (!seen(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x) + w, Math.max(a.y, b.y) + h)) return;
+      const { line, head } = edgePath(e, a, b, w, h, z);
+      const color = e.kind === "blocks" ? t.blocked : t.dim;
+      lines.push(layer(line, color, `kata-edge-${k}`));
+      if (head) lines.push(layer(head, color, `kata-head-${k}`));
+    });
+    const cards = g.nodes.map((n) => [n, at(n.uid)])
+      .filter(([, p]) => seen(p.x, p.y, p.x + w, p.y + h))
+      .map(([n, p]) => this.graphCard(n, p, z, spot));
+    const view = div().id("kata-graph-view").flex_1().min_h(0).relative().overflow_hidden()
+      .on_size_change((size, cx) => {
+        const first = !this.vsize;
+        this.vsize = size;
+        if (first) cx.notify();
+      })
+      .on_mouse_down("left", (e) => { this.dragFrom = e.position; this.dragged = false; })
+      .on_mouse_up("left", () => { this.dragFrom = null; })
+      .on_mouse_move((e, cx) => {
+        if (!this.dragFrom) return;
+        const dx = e.position.x - this.dragFrom.x;
+        const dy = e.position.y - this.dragFrom.y;
+        // A press that moved this far was a pan, so the card under its end is
+        // not clicked.
+        if (this.dragged || Math.hypot(dx, dy) > 4) this.dragged = true;
+        else return;
+        this.vx += dx;
+        this.vy += dy;
+        this.dragFrom = e.position;
+        cx.notify();
+      })
+      // A trackpad's two-finger scroll pans; ctrl or cmd with the wheel (and a
+      // pinch, which arrives as ctrl) zooms about the pointer.
+      .on_scroll_wheel((e, cx) => {
+        if (e.modifiers.control || e.modifiers.platform) {
+          const p = e.local_position ?? { x: (v?.width ?? 0) / 2, y: (v?.height ?? 0) / 2 };
+          this.zoomAt(Math.exp(-e.delta.y / 200), p.x, p.y, cx);
+        } else {
+          this.vx -= e.delta.x;
+          this.vy -= e.delta.y;
+          cx.notify();
+        }
+      })
+      .children(lines)
+      .children(cards);
+    const shown = g.nodes.length;
+    return root.child(this.graphBar(cx, focusIssue))
+      .child(view)
+      .child(h_flex().h(26).flex_none().px(14).items_center().border_t(1).border_color(t.border)
+        .child(div().text_size(10.5).text_color(t.dim).child(
+          `${shown} issue${shown === 1 ? "" : "s"}${spot ? ` within ${this.depth} hop${this.depth > 1 ? "s" : ""}` : ""}`
+          + `${g.over ? ` (${g.over} more not drawn)` : ""} — drag to pan, ctrl-scroll or pinch to zoom, click an issue to open it in the panel`)));
+  }
+
   // ---- pieces ----
 
   iconButton(id, icon, tip, action, spin = false, on = false) {
@@ -1121,6 +1565,11 @@ export default class Kata extends View {
       .when(Boolean(hint), (el) => el.child(div().text_size(11).text_color(t.dim).child(hint)));
   }
 
+  // A project with no issues has no graph to open.
+  nothingToShow() {
+    return this.issues.length === 0 && !this.selected;
+  }
+
   head(cx) {
     const t = theme();
     const name = this.resolved?.name ?? null;
@@ -1138,6 +1587,11 @@ export default class Kata extends View {
           .text_size(10.5).max_w(170).truncate().tooltip(guessed ? `No kata binding here: the git repo's name, ${name}` : "The bound kata project")
           .child(name)))
       .child(div().flex_1())
+      .when(this.ready && !this.missing && !this.nothingToShow(), (el) => el
+        .child(this.iconButton("kata-graph", "graph",
+          this.selected ? "Show this issue's graph: what it hangs from, blocks and relates to"
+            : "Show the graph of every linked issue in this project",
+          () => this.openGraph(this.selected))))
       .when(list, (el) => el
         .child(this.iconButton("kata-search", "search",
           this.searchOpen ? "Close the search" : "Search the ids, titles and bodies in this list",
@@ -1561,6 +2015,7 @@ export default class Kata extends View {
   }
 
   render(cx) {
+    if (this.graph) return this.renderGraph(cx);
     // The key may have changed hands since this copy last looked — a space
     // arrived at while this panel was showing — so every render takes in what
     // it does not recognize before drawing a thing.

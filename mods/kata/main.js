@@ -342,7 +342,7 @@ function workState(t, i, blocked = false) {
   if (i.labels?.includes("backlog") || (someday != null && someday !== false && someday !== "false")) {
     return { key: "backlog", label: "backlog", color: t.dim };
   }
-  if (blocked) return { key: "blocked", label: "blocked by an open issue", color: t.dim };
+  if (blocked) return { key: "blocked", label: "blocked", color: t.dim };
   return { key: "ready", label: "ready", color: t.dim };
 }
 
@@ -1129,6 +1129,19 @@ export default class Kata extends View {
     return this.issues.filter((i) => !i.branch).length;
   }
 
+  // Blocked: an open issue blocks it, or it is a parent whose open children are
+  // all blocked themselves — nothing under it can move, so neither can it. A
+  // parent with no open children is not blocked by them, and a child that is
+  // in flight or backlog still counts as blocked only if something blocks it.
+  isBlocked(i, seen = new Set()) {
+    if (!i || i.closed || i.stub) return false;
+    if (i.blockedBy.some((b) => b.status === "open")) return true;
+    if (seen.has(i.uid)) return false;
+    seen.add(i.uid);
+    const open = this.kids(i.uid).filter((k) => !k.closed);
+    return open.length > 0 && open.every((k) => this.isBlocked(k, seen));
+  }
+
   kids(uid) {
     return [...this.issues, ...this.ancestors.values()].filter((i) => i.parent === uid);
   }
@@ -1442,7 +1455,7 @@ export default class Kata extends View {
       .on_click((_e, cx) => this.pickNode(n))
       .child(h_flex().gap(5 * z).items_center()
         .when(!n.closed && !n.stub, (el) => el.child(stateDot(t, workState(t, n,
-          n.blockedBy.some((b) => b.status === "open")), 7 * z).tooltip(workState(t, n).label)))
+          this.isBlocked(n)), 7 * z).tooltip(workState(t, n, this.isBlocked(n)).label)))
         .child(div().flex_none().text_size(10.5 * z).text_color(n.closed ? t.dim : t.muted).child(`#${n.ref}`))
         .when(n.priority != null, (el) => el.child(div().flex_none().text_size(9.5 * z)
           .text_color(priorityColor(t, n.priority)).child(`P${n.priority}`)))
@@ -1755,7 +1768,7 @@ export default class Kata extends View {
   // sits is not what the person searched for.
   hitRow(i, hit, cx) {
     const t = theme();
-    const blocked = i.blockedBy.some((b) => b.status === "open");
+    const blocked = this.isBlocked(i);
     const st = workState(t, i, blocked);
     const hint = hit === "body" ? snippet(i.body, this.queryQ()) : "";
     return h_flex().id(`kata-hit-${i.uid}`).flex_none().mx(6).px(8).py(4).gap(6).rounded(6)
@@ -1822,7 +1835,7 @@ export default class Kata extends View {
     const t = theme();
     const i = entry.issue;
     const open = !this.collapsed.has(i.uid);
-    const blocked = i.blockedBy.some((b) => b.status === "open");
+    const blocked = this.isBlocked(i);
     const st = workState(t, i, blocked);
     const step = Math.min(entry.depth, 8);
     // A context row is a parent the filters kept out of the list, drawn so the
@@ -2004,12 +2017,12 @@ export default class Kata extends View {
       .child(div().text_size(11.5).text_color(t.muted).child("All issues"));
     // The ref, what state it is in, and its priority: the three things that say
     // whether this is the issue the person meant.
-    const st = workState(t, i, i.blockedBy.some((b) => b.status === "open"));
+    const st = workState(t, i, this.isBlocked(i));
     const state = h_flex().flex_none().px(5).gap(4).items_center().rounded(99).text_size(9.5)
       .bg(i.closed ? t.done : t.raised)
       .text_color(i.closed ? t.background : t.muted)
       .when(!i.closed, (el) => el.child(stateDot(t, st, 6)))
-      .child(i.closed ? st.label : st.label.split(" — ")[0].replace(" by an open issue", ""));
+      .child(i.closed ? st.label : st.label.split(" — ")[0]);
     const top = h_flex().gap(6).items_center()
       .child(div().flex_none().text_size(11).text_color(t.dim).child(`#${i.ref}`))
       .child(state)

@@ -324,6 +324,37 @@ function ago(ms) {
 
 // A priority's colour, the way a queue reads: the two that come first are the
 // loud ones, and everything else is quiet.
+// Where an open issue stands. Kata itself has two statuses, open and closed, so
+// this is read from what the workflow leaves behind. Started: `kata claim` sets
+// the owner and the agent contract then sets `work.attention` (ok, needs-human
+// or stuck); either means the work is in flight. Backlog: the `backlog` label
+// or `someday` metadata, which is also what `kata ready` leaves out. Blocked: an
+// open issue blocks it. What is left is ready. In flight wins over everything,
+// then backlog, since a deliberate "not now" is the more useful thing to know
+// than an incidental blocker.
+function workState(t, i, blocked = false) {
+  if (i.closed) return { key: "done", label: i.reason ?? "closed", color: t.done };
+  const attention = String(i.meta?.["work.attention"] ?? "").replace(/^["']+|["']+$/g, "");
+  if (attention === "stuck") return { key: "stuck", label: "in progress — stuck", color: t.ansi1 };
+  if (attention === "needs-human") return { key: "needs", label: "in progress — needs a person", color: t.ansi5 };
+  if (i.owner || attention) return { key: "started", label: `in progress${i.owner ? ` — ${i.owner}` : ""}`, color: t.ansi4 };
+  const someday = i.meta?.someday;
+  if (i.labels?.includes("backlog") || (someday != null && someday !== false && someday !== "false")) {
+    return { key: "backlog", label: "backlog", color: t.dim };
+  }
+  if (blocked) return { key: "blocked", label: "blocked by an open issue", color: t.dim };
+  return { key: "ready", label: "ready", color: t.dim };
+}
+
+// The marker that says it. Gray is quiet on purpose — most work is not ready —
+// so the shapes carry it: an outline circle is backlog, a filled gray circle is
+// ready, an outline square is blocked. In flight is the one with colour.
+function stateDot(t, st, size = 7) {
+  if (st.key === "blocked") return div().size(size).rounded(size * 0.2).border_1().border_color(st.color);
+  const dot = div().size(size).rounded(99);
+  return st.key === "backlog" ? dot.border_1().border_color(st.color) : dot.bg(st.color);
+}
+
 function priorityColor(t, p) {
   if (p <= 1) return t.ansi1;
   if (p === 2) return t.ansi3;
@@ -1410,6 +1441,8 @@ export default class Kata extends View {
       .flex().flex_col().justify_center().gap(1).overflow_hidden()
       .on_click((_e, cx) => this.pickNode(n))
       .child(h_flex().gap(5 * z).items_center()
+        .when(!n.closed && !n.stub, (el) => el.child(stateDot(t, workState(t, n,
+          n.blockedBy.some((b) => b.status === "open")), 7 * z).tooltip(workState(t, n).label)))
         .child(div().flex_none().text_size(10.5 * z).text_color(n.closed ? t.dim : t.muted).child(`#${n.ref}`))
         .when(n.priority != null, (el) => el.child(div().flex_none().text_size(9.5 * z)
           .text_color(priorityColor(t, n.priority)).child(`P${n.priority}`)))
@@ -1723,6 +1756,7 @@ export default class Kata extends View {
   hitRow(i, hit, cx) {
     const t = theme();
     const blocked = i.blockedBy.some((b) => b.status === "open");
+    const st = workState(t, i, blocked);
     const hint = hit === "body" ? snippet(i.body, this.queryQ()) : "";
     return h_flex().id(`kata-hit-${i.uid}`).flex_none().mx(6).px(8).py(4).gap(6).rounded(6)
       .items_center().cursor_pointer().hover((s) => s.bg(t.hover))
@@ -1730,8 +1764,7 @@ export default class Kata extends View {
       .child(i.closed
         ? svg(`${ICONS}/check-circle.svg`).size(11).flex_none().text_color(t.done)
         : div().w(11).flex_none().flex().items_center().justify_center()
-          .child(div().size(6).rounded(99).bg(blocked ? t.ansi3 : t.dim)
-            .when(blocked, (el) => el.tooltip("Blocked by an open issue"))))
+          .tooltip(st.label).child(stateDot(t, st)))
       .child(div().flex_none().text_size(11).text_color(t.dim).child(`#${i.ref}`))
       .child(v_flex().flex_1().min_w(0).gap(1)
         .child(div().truncate().text_size(12).text_color(i.closed ? t.muted : t.foreground)
@@ -1790,6 +1823,7 @@ export default class Kata extends View {
     const i = entry.issue;
     const open = !this.collapsed.has(i.uid);
     const blocked = i.blockedBy.some((b) => b.status === "open");
+    const st = workState(t, i, blocked);
     const step = Math.min(entry.depth, 8);
     // A context row is a parent the filters kept out of the list, drawn so the
     // task under it has something to hang from: quieter than a task of this
@@ -1812,8 +1846,7 @@ export default class Kata extends View {
       .child(i.closed
         ? svg(`${ICONS}/check-circle.svg`).size(11).flex_none().text_color(t.done)
         : div().w(11).flex_none().flex().items_center().justify_center()
-          .child(div().size(6).rounded(99).bg(blocked ? t.ansi3 : t.dim)
-            .when(blocked, (el) => el.tooltip("Blocked by an open issue"))))
+          .tooltip(st.label).child(stateDot(t, st)))
       .child(div().flex_none().text_size(11).text_color(t.dim).child(`#${i.ref}`))
       .child(div().flex_1().min_w(0).truncate()
         .text_color(quiet ? t.muted : t.foreground).child(i.title))
@@ -1971,10 +2004,12 @@ export default class Kata extends View {
       .child(div().text_size(11.5).text_color(t.muted).child("All issues"));
     // The ref, what state it is in, and its priority: the three things that say
     // whether this is the issue the person meant.
-    const state = div().flex_none().px(5).rounded(99).text_size(9.5)
+    const st = workState(t, i, i.blockedBy.some((b) => b.status === "open"));
+    const state = h_flex().flex_none().px(5).gap(4).items_center().rounded(99).text_size(9.5)
       .bg(i.closed ? t.done : t.raised)
       .text_color(i.closed ? t.background : t.muted)
-      .child(i.closed ? (i.reason ?? "closed") : i.status);
+      .when(!i.closed, (el) => el.child(stateDot(t, st, 6)))
+      .child(i.closed ? st.label : st.label.split(" — ")[0].replace(" by an open issue", ""));
     const top = h_flex().gap(6).items_center()
       .child(div().flex_none().text_size(11).text_color(t.dim).child(`#${i.ref}`))
       .child(state)

@@ -64,6 +64,14 @@ manifest is the whole contract.
   parent and children as chips, blocks/blocked-by/related, and the body as
   rendered markdown. Following chips leaves a trail; `‹` walks it back naming
   each issue, `All issues` returns to the tree.
+- **Work state**: kata has only open and closed, so the state is read from
+  what the workflow leaves. In flight: an owner (`kata claim`) or a
+  `work.attention` value — a blue dot, red for `stuck`, purple for
+  `needs-human`. Backlog: the `backlog` label or `someday` metadata — a gray
+  outline circle. Blocked by an open issue — a gray outline square. Anything
+  else open is ready — a gray filled circle. The marker is before each row, on
+  the graph's cards and in the detail pill. Gray is quiet on purpose: most work
+  is not ready, and ready and in-flight are what to find.
 - **Metadata and comments** in the detail view: every metadata key but
   `work.branch` (which is the Branch row) as a key and its value, and the
   issue's comments, oldest first, with author, age and rendered markdown. The

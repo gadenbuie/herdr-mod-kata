@@ -47,9 +47,9 @@ manifest is the whole contract.
 ## What it shows
 
 - **The tree**, refreshed every 15 s (`kata tui`'s own pace) and on the ↻
-  button: open before closed, then priority, then what moved last — and an
-  open task an open sibling blocks sits below that sibling, whatever the
-  priorities say. A parent
+  button: open before closed, then priority, then what moved last, with ready
+  open tasks above blocked ones and a task below the open sibling that blocks
+  it. A parent
   folds, its `+N` counts every task under it, an open task blocked by another
   open one carries an amber marker, and a closed one a check in the theme's
   `done` color.

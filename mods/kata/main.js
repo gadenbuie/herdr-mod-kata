@@ -312,29 +312,36 @@ function order(a, b) {
     || b.updated - a.updated;
 }
 
-// Siblings in drawing order: the base work order, with one exception — an open
-// task one of its open siblings blocks draws below that sibling, whatever the
-// priorities say, because the work that frees work goes first. Picked the way a
-// schedule is: repeatedly take the highest-placed sibling nothing still waiting
-// blocks. Only sibling edges count — a task's blocker under another parent
-// already sits in that parent's place, and the marker says the rest — and a
-// cycle (two tasks each naming the other a blocker, which no list should carry)
-// has no task free to take, so the next in the base order goes rather than the
-// list sticking.
+// Siblings in drawing order: the base work order cut into three bands — open
+// and unblocked, open and blocked, closed — because work that can start should
+// read before work that cannot, and closed work is history. The base order
+// holds inside every band, with one exception in the blocked band: a task
+// draws below an open sibling that blocks it, whatever the priorities or
+// recency say, because the work that frees work goes first. Picked the way a
+// schedule is: repeatedly take the highest-placed task nothing still waiting
+// blocks. Only sibling edges count there — a task's blocker under another
+// parent already sits in that parent's place, and the marker says the rest —
+// and a cycle (two tasks each naming the other a blocker, which no list should
+// carry) has no task free to take, so the next in the base order goes rather
+// than the list sticking.
 function ordered(list) {
-  const left = [...list].sort((a, b) => order(a.issue, b.issue));
-  if (left.length < 2) return left;
-  const pending = new Set(left.filter((n) => !n.issue.closed).map((n) => n.issue.uid));
+  const base = [...list].sort((a, b) => order(a.issue, b.issue));
+  if (base.length < 2) return base;
+  const blocked = (n) => n.issue.blockedBy.some((b) => b.status === "open");
+  const ready = base.filter((n) => !n.issue.closed && !blocked(n));
+  const closed = base.filter((n) => n.issue.closed);
+  const waiting = base.filter((n) => !n.issue.closed && blocked(n));
+  const pending = new Set(waiting.map((n) => n.issue.uid));
   const out = [];
-  while (left.length) {
-    let at = left.findIndex((n) => n.issue.closed
-      || !n.issue.blockedBy.some((b) => b.uid !== n.issue.uid && pending.has(b.uid)));
+  while (waiting.length) {
+    let at = waiting.findIndex((n) =>
+      !n.issue.blockedBy.some((b) => b.uid !== n.issue.uid && pending.has(b.uid)));
     if (at < 0) at = 0; // a blocking cycle among what is left: take the first
-    const [node] = left.splice(at, 1);
+    const [node] = waiting.splice(at, 1);
     pending.delete(node.issue.uid);
     out.push(node);
   }
-  return out;
+  return [...ready, ...out, ...closed];
 }
 
 function ago(ms) {

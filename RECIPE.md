@@ -198,10 +198,11 @@ thing.
 - A folded row carries `+N`, N being every task under it, not just its
   children.
 - Siblings sort by work order: open before closed, then priority (unset
-  last), then most recently updated — with one exception: an open task one of
-  its open siblings blocks draws below that sibling, whatever the priorities
-  say. The relation only reorders siblings; a blocker under another parent
-  stays in that parent's place, and the blocked task's marker says the rest.
+  last), then most recently updated — drawn in three bands, ready open tasks,
+  then blocked open tasks, then closed. A task draws below the open sibling
+  that blocks it, whatever the priorities or recency say. The relation only
+  reorders siblings; a blocker under another parent stays in that parent's
+  place, and the blocked task's marker says the rest.
 - **A task always hangs from its parent.** When a filter keeps the parent out
   of the read, or out of the branch, the parent comes back as a **context
   row**: same 26 px row, same fold chevron, `muted` title, and a tooltip saying

@@ -379,12 +379,15 @@ function workState(t, i, blocked = false) {
 }
 
 // The marker that says it. Gray is quiet on purpose — most work is not ready —
-// so the shapes carry it: an outline circle is backlog, a filled gray circle is
-// ready, an outline square is blocked. In flight is the one with colour.
+// so the shapes carry it: a small gray dot is backlog (parked, quieter than
+// anything else open), a full gray dot is ready, an outline square is blocked.
+// In flight is the one with colour.
 function stateDot(t, st, size = 7) {
   if (st.key === "blocked") return div().size(size).rounded(size * 0.2).border_1().border_color(st.color);
-  const dot = div().size(size).rounded(99);
-  return st.key === "backlog" ? dot.border_1().border_color(st.color) : dot.bg(st.color);
+  const dot = div().size(st.key === "backlog" ? size * 0.6 : size).rounded(99).bg(st.color);
+  return st.key === "backlog"
+    ? div().size(size).flex().items_center().justify_center().child(dot)
+    : dot;
 }
 
 function priorityColor(t, p) {

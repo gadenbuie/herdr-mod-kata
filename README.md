@@ -69,8 +69,9 @@ manifest is the whole contract.
 - **Work state**: kata has only open and closed, so the state is read from
   what the workflow leaves. In flight: an owner (`kata claim`) or a
   `work.attention` value — a blue dot, red for `stuck`, purple for
-  `needs-human`. Backlog: the `backlog` label or `someday` metadata — a gray
-  outline circle. Blocked by an open issue, or a parent whose open children are all blocked — a gray outline square. Anything
+  `needs-human`. Backlog: the `backlog` label or `someday` metadata — a small
+  gray dot, quieter than ready's. Blocked by an open issue, or a parent whose
+  open children are all blocked — a gray outline square. Anything
   else open is ready — a gray filled circle. The marker is before each row, on
   the graph's cards and in the detail pill. Gray is quiet on purpose: most work
   is not ready, and ready and in-flight are what to find.

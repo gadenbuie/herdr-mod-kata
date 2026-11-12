@@ -256,9 +256,21 @@ Under the nav row, the issue itself:
 - The description as **markdown**, kata's own body, rendered by `TextView`
   (`gpui-base`): kata bodies are plans and requirements, and they read as text,
   not as an escaped string.
-- Blocks / Blocked by / Related as wrapping chips. A ref the panel has read
-  opens; the rest are text, in `dim` when the issue is closed, because the
-  panel only knows what one list told it.
+- Blocked by / Blocks / Related as field rows: the label in the column the
+  other fields share, topping with the first of the wrapping ref chips beside
+  it, the row padded so a group that wraps reads as one block apart from the
+  groups above and below. A chip the panel knows by
+  name reads like the parent chip — its ref and a title preview, truncating —
+  and opens it; the targets a list did not carry are asked for with `kata
+  show`, the same fetch that fills in parents, so the names land a moment
+  later. One the panel cannot name is a bare ref, in `dim` when the issue is
+  closed, because the panel only knows what one list told it.
+- Every metadata key but `work.branch` (which is the Branch row) as its own
+  field row at the bottom of the block, after a `Metadata` heading —
+  semibold, with a little air above it. The heading and that space are the
+  whole signal that what follows is beyond what kata provides, written by
+  whoever made the issue. Keys in name order, values as written: text as
+  text, anything structured as one line of JSON.
 
 **The placeholder** for a space with no kata project is the header and one
 centred note: "No kata project here", the folder, and

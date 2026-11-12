@@ -894,6 +894,13 @@ export default class Kata extends View {
     cx.spawn((cx) => this.gather(cx, this.gen, this.origin, this.resolved));
   }
 
+  // The links of the issue just opened: the same gather that fetches parents
+  // also asks after the issue's blockers, blocks and kin when the list did not
+  // carry them, so the chips in its detail view can name what they point at.
+  needRefs(cx) {
+    this.needParents(cx);
+  }
+
   read(cx, limit = this.ceiling) {
     const origin = this.origin;
     const gen = ++this.gen;
@@ -987,6 +994,13 @@ export default class Kata extends View {
     const ask = (i) => { if (i.parent && !have.has(i.parent)) want.add(i.parent); };
     for (const i of this.filtered()) ask(i);
     for (const i of this.ancestors.values()) ask(i);
+    // The open issue's own links: its blockers, blocks and kin are drawn in the
+    // detail view, and a chip with a title behind it reads like the parent row
+    // does — kata's links carry no titles, so the targets are asked for whole.
+    const open = this.selected ? this.by(this.selected) : null;
+    if (open) for (const r of [...open.blockedBy, ...open.blocks, ...open.related]) {
+      if (!have.has(r.uid)) want.add(r.uid);
+    }
     return [...want];
   }
 
@@ -1019,10 +1033,13 @@ export default class Kata extends View {
   // in the new read still points at, directly or through another parent, is
   // forgotten — and so is one the new read carries itself, which is a row of its
   // own now. A status or branch change then does not carry old rows into it.
+  // The open issue's ref targets stay too, for the chips in its detail view.
   prune() {
     const have = new Set(this.issues.map((i) => i.uid));
     const keep = new Set();
     const need = this.issues.map((i) => i.parent).filter(Boolean);
+    const open = this.selected ? this.by(this.selected) : null;
+    if (open) for (const r of [...open.blockedBy, ...open.blocks, ...open.related]) need.push(r.uid);
     while (need.length) {
       const uid = need.pop();
       if (keep.has(uid)) continue;
@@ -1284,6 +1301,7 @@ export default class Kata extends View {
     this.selected = uid;
     this.save();
     this.ensureDetail(cx);
+    this.needRefs(cx);
     cx.notify();
   }
 
@@ -1292,6 +1310,7 @@ export default class Kata extends View {
     this.selected = this.trail.pop() ?? null;
     this.save();
     this.ensureDetail(cx);
+    this.needRefs(cx);
     cx.notify();
   }
 
@@ -1358,17 +1377,16 @@ export default class Kata extends View {
         .child("kata cut the thread short; `kata show` has the rest.")));
   }
 
-  // The metadata the panel has no row of its own for.
+  // The metadata the panel has no row of its own for: the fields' own layout,
+  // under a heavier `Metadata` heading with a little air above it — the space
+  // and the heading are the whole signal that what follows is beyond what
+  // kata provides, written by whoever made the issue.
   metadata(i) {
-    const t = theme();
     const rows = metaRows(i.meta);
     if (!rows.length) return null;
-    return v_flex().gap(3).pt(6)
-      .child(div().text_size(11).text_color(t.dim).child("Metadata"))
-      .child(v_flex().gap(4).p(8).rounded(6).bg(t.raised)
-        .children(rows.map((r) => v_flex().gap(1)
-          .child(div().text_size(10.5).text_color(t.dim).child(r.key))
-          .child(div().text_size(11.5).text_color(t.muted).child(r.value)))));
+    return v_flex().pt(6).gap(3)
+      .child(div().text_size(11).font_semibold().text_color(theme().muted).child("Metadata"))
+      .children(rows.map((r) => this.field(r.key, r.value)));
   }
 
   // ---- the graph window ----
@@ -2000,23 +2018,40 @@ export default class Kata extends View {
   }
 
   // Refs to other issues, as chips: the ones in this read open, the rest are
-  // text, because the panel only knows what one list told it.
-  chips(title, list, cx) {
+  // text, because the panel only knows what one list told it. A ref the panel
+  // knows by name reads like the parent chip — its ref and a title preview —
+  // and opens; one it does not know is a bare ref until the fetch lands.
+  refs(list, cx) {
     const t = theme();
-    if (!list.length) return null;
-    return v_flex().gap(4).flex_none().pt(2)
-      .child(div().text_size(11).text_color(t.dim).child(title))
-      .child(h_flex().flex_wrap().gap(4)
-        .children(list.map((r) => {
-          const known = Boolean(this.by(r.uid));
-          const closed = r.status === "closed";
-          return h_flex().id(`kata-ref-${r.uid}`).h(20).flex_none().px(6).gap(4).rounded(5).items_center()
-            .bg(t.raised)
-            .when(known, (el) => el.cursor_pointer().hover((s) => s.bg(t.selected)))
-            .when(known, (el) => el.on_click((_e, cx) => this.open(r.uid, cx)))
-            .child(div().text_size(10.5).text_color(closed ? t.dim : t.muted).child(`#${r.ref}`))
-            .when(closed, (el) => el.child(svg(`${ICONS}/check-circle.svg`).size(9).flex_none().text_color(t.done)));
-        })));
+    return h_flex().flex_wrap().gap(4)
+      .children(list.map((r) => {
+        const known = this.by(r.uid);
+        const closed = r.status === "closed";
+        const ink = closed ? t.dim : t.muted;
+        return h_flex().id(`kata-ref-${r.uid}`).h(20).flex_none().max_w(220).px(6).gap(4).rounded(5).items_center()
+          .bg(t.raised)
+          .when(Boolean(known), (el) => el.cursor_pointer().hover((s) => s.bg(t.selected)))
+          .when(Boolean(known), (el) => el.on_click((_e, cx) => this.open(r.uid, cx)))
+          .child(div().flex_none().text_size(10.5).text_color(ink).child(`#${r.ref}`))
+          .when(Boolean(known), (el) => el.child(div().min_w(0).truncate()
+            .text_size(10.5).text_color(ink).child(known.title)))
+          .when(closed, (el) => el.child(svg(`${ICONS}/check-circle.svg`).size(9).flex_none().text_color(t.done)));
+      }));
+  }
+
+  // Ref chips drawn as a field of the info block, the way Parent is: the label
+  // in the column the other fields share, the chips beside it. The label tops
+  // with the first chip and the row carries a little vertical padding, so a
+  // group that wraps reads as one block and keeps its distance from the
+  // groups above and below it.
+  refField(label, list, cx) {
+    const t = theme();
+    return h_flex().gap(8).flex_none().items_start().py(2)
+      // The label centers in the same 20 px the chip centers its own text in,
+      // so the baselines meet without anyone counting pixels.
+      .child(h_flex().w(66).flex_none().h(20).items_center()
+        .child(div().text_size(11).text_color(t.dim).child(label)))
+      .child(this.refs(list, cx));
   }
 
   // The way back, and the way out of the detail view. With a trail behind it,
@@ -2090,18 +2125,18 @@ export default class Kata extends View {
         .child(div().w(66).flex_none().text_size(11).text_color(t.dim).child("Parent"))
         .child(parentRow)))
       .when(kids.length > 0, (el) => el
-        .child(this.field("Children", kids.map((k) => `#${k.ref}`).join(", "))));
+        .child(this.field("Children", kids.map((k) => `#${k.ref}`).join(", "))))
+      .when(i.blockedBy.length > 0, (el) => el.child(this.refField("Blocked by", i.blockedBy, cx)))
+      .when(i.blocks.length > 0, (el) => el.child(this.refField("Blocks", i.blocks, cx)))
+      .when(i.related.length > 0, (el) => el.child(this.refField("Related", i.related, cx)))
+      .children([this.metadata(i)].filter(Boolean));
     const body = v_flex().px(14).gap(5)
       .child(top)
       .child(div().text_size(13.5).font_semibold().text_color(t.foreground).child(i.title))
       .child(meta)
-      .when(i.blocks.length > 0, (el) => el.child(this.chips("Blocks", i.blocks, cx)))
-      .when(i.blockedBy.length > 0, (el) => el.child(this.chips("Blocked by", i.blockedBy, cx)))
-      .when(i.related.length > 0, (el) => el.child(this.chips("Related", i.related, cx)))
       // The description is kata's own markdown, drawn as markdown: it is where
       // the work, the plan and the requirements usually are.
       .child(div().pt(4).child(TextView.markdown(`kata-body-${i.uid}`, i.body || "_No description._")))
-      .children([this.metadata(i)].filter(Boolean))
       .child(this.thread(i));
     return v_flex().id("kata-detail").w_full().flex_none().pb(16).child(this.nav(cx)).child(body);
   }

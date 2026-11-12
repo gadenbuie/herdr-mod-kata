@@ -75,9 +75,10 @@ manifest is the whole contract.
   the graph's cards and in the detail pill. Gray is quiet on purpose: most work
   is not ready, and ready and in-flight are what to find.
 - **Metadata and comments** in the detail view: every metadata key but
-  `work.branch` (which is the Branch row) as a key and its value, and the
-  issue's comments, oldest first, with author, age and rendered markdown. The
-  thread comes from `kata show` when an issue opens and again on each refresh.
+  `work.branch` (which is the Branch row) as a field row at the bottom of the
+  info block, after a `Metadata` heading, plus the issue's comments, oldest
+  first, with author, age and rendered markdown. The thread comes from
+  `kata show` when an issue opens and again on each refresh.
 - **The graph**: the graph button in the detail header opens a window over the
   app with that issue's neighbourhood — parent, blocks and related links, one
   to three hops out (`Hide done` drops closed issues) — laid out in columns,

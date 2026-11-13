@@ -730,8 +730,9 @@ export default class Kata extends View {
     this.collapsed = new Set();
     this.selected = null;    // the uid the detail view shows
     // The issues the detail view came through, oldest first, the one before
-    // the shown issue last: the trail `back` walks. Opening from the tree
-    // starts a new one, so the tree is always where an empty trail ends.
+    // the shown issue last: the trail `back` walks, one click one step, until
+    // it ends at the tree. Opening from the tree starts a new one, so the
+    // tree is always where an empty trail ends.
     this.trail = [];
     this.folder = null;      // the folder the shown project was read from
     this.loading = false;
@@ -1303,7 +1304,8 @@ export default class Kata extends View {
   // Every way into a detail view comes through here, so the trail is the same
   // whichever link was followed — a row in the tree, a ref chip, the parent.
   // From the tree the trail starts over (there is nothing behind it); from
-  // another issue it is one step longer.
+  // another issue it is one step longer, and `back` unwinds it one click at a
+  // time until the tree is back.
   open(uid, cx) {
     if (!uid || uid === this.selected) return;
     if (this.selected) this.trail.push(this.selected);
@@ -2064,60 +2066,64 @@ export default class Kata extends View {
       .child(this.refs(list, cx));
   }
 
-  // The way back, and the way out of the detail view. With a trail behind it,
-  // the back button names the issue it returns to: a chain of refs is easy to
-  // follow and hard to remember, so "back" has to say where it goes. The tree
-  // keeps a button of its own beside it, which clears the trail however deep it
-  // is. With nothing behind it, back *is* the tree, and one button says so
-  // rather than offering the same step twice.
-  nav(cx) {
+  // The way back, the way out of the detail view, and the task itself. The
+  // bar carries the shown issue alone — ref, state, priority — so it reads as
+  // the one task on screen, not a place where two tasks sit side by side; the
+  // way back is a bare chevron before it, and "All issues" stands apart at the
+  // right end. The bar sits above the detail's scroll, not in it — pinned by
+  // position, not by scroll work — so the task and the way back stay on screen
+  // however far the body scrolls under it. The chevron unwinds the trail one
+  // click per step — C, then B, then A, then the tree — and its tooltip says
+  // which step comes next and how many wait behind it.
+  nav(i, cx) {
     const t = theme();
     const came = this.cameFrom();
     const behind = this.trail.length > 1 ? ` (${this.trail.length - 1} more behind it)` : "";
-    const back = h_flex().id("kata-back").h(28).flex_1().min_w(0).px(8).gap(4).rounded(6).items_center()
-      .cursor_pointer().hover((s) => s.bg(t.hover))
-      .on_click((_e, cx) => (came ? this.back(cx) : this.dismiss(cx)))
-      .child(svg(`${ICONS}/chevron-left.svg`).size(11).flex_none().text_color(t.dim))
+    // The chevron is a button wherever the trail points — at an issue, or at
+    // the tree when nothing is behind it — so it keeps its pointer and hover
+    // either way; only its ink says whether the step goes anywhere. Wide
+    // enough to land a click on without aiming: a narrow target beside a
+    // 28 px bar is a miss waiting to happen.
+    const back = h_flex().id("kata-back").w(26).h(28).flex_none().items_center().justify_center()
+      .rounded(6).cursor_pointer().hover((s) => s.bg(t.hover))
       .when(Boolean(came), (el) => el
-        .tooltip(`Back to #${came.ref} — ${came.title}${behind}`)
-        .child(div().flex_none().text_size(10.5).text_color(t.dim).child(`#${came.ref}`))
-        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(came.title)))
-      .when(!came, (el) => el
-        .child(div().text_size(11.5).text_color(t.muted).child("All issues")));
-    const home = h_flex().id("kata-all").h(28).flex_none().px(8).gap(4).rounded(6).items_center()
-      .cursor_pointer().hover((s) => s.bg(t.hover))
-      .tooltip("All issues: the whole tree, and the trail behind it cleared")
-      .on_click((_e, cx) => this.dismiss(cx))
-      .child(svg(`${ICONS}/icon.svg`).size(11).flex_none().text_color(t.dim))
-      .child(div().flex_none().text_size(11.5).text_color(t.muted).child("All issues"));
-    return h_flex().id("kata-nav").h(28).flex_none().mx(6).gap(2).items_center()
-      .child(back)
-      .when(Boolean(came), (el) => el.child(home));
-  }
-
-  detail(i, cx) {
-    const t = theme();
-    const parent = i.parent ? this.by(i.parent) : null;
-    const kids = this.kids(i.uid);
-    const back = h_flex().id("kata-back").h(28).flex_none().mx(6).px(8).gap(4).rounded(6).items_center()
-      .cursor_pointer().hover((s) => s.bg(t.hover))
-      .on_click((_e, cx) => { this.selected = null; this.save(); cx.notify(); })
-      .child(svg(`${ICONS}/chevron-left.svg`).size(11).flex_none().text_color(t.dim))
-      .child(div().text_size(11.5).text_color(t.muted).child("All issues"));
-    // The ref, what state it is in, and its priority: the three things that say
-    // whether this is the issue the person meant.
+        .tooltip(`Back to #${came.ref} — ${came.title}${behind}`))
+      .on_click((_e, cx) => (came ? this.back(cx) : this.dismiss(cx)))
+      .child(svg(`${ICONS}/chevron-left.svg`).size(12).text_color(came ? t.muted : t.dim));
+    // The ref, what state it is in, and its priority: the three things that
+    // say whether this is the issue the person meant, kept in view with the
+    // way back instead of scrolled away with the body.
     const st = workState(t, i, this.isBlocked(i));
     const state = h_flex().flex_none().px(5).gap(4).items_center().rounded(99).text_size(9.5)
       .bg(i.closed ? t.done : t.raised)
       .text_color(i.closed ? t.background : t.muted)
       .when(!i.closed, (el) => el.child(stateDot(t, st, 6)))
       .child(i.closed ? st.label : st.label.split(" — ")[0]);
-    const top = h_flex().gap(6).items_center()
+    const task = h_flex().id("kata-task").flex_1().min_w(0).px(2).gap(6).items_center()
       .child(div().flex_none().text_size(11).text_color(t.dim).child(`#${i.ref}`))
       .child(state)
       .when(i.priority != null, (el) => el.child(div().flex_none().text_size(10)
         .text_color(priorityColor(t, i.priority)).child(`P${i.priority}`)))
       .child(div().flex_1());
+    const home = h_flex().id("kata-all").h(28).flex_none().px(8).gap(4).rounded(6).items_center()
+      .cursor_pointer().hover((s) => s.bg(t.hover))
+      .tooltip("All issues: the whole tree, and the trail behind it cleared")
+      .on_click((_e, cx) => this.dismiss(cx))
+      .child(svg(`${ICONS}/icon.svg`).size(11).flex_none().text_color(t.dim))
+      .child(div().flex_none().text_size(11.5).text_color(t.muted).child("All issues"));
+    return v_flex().id("kata-nav").flex_none().border_b(1).border_color(t.border)
+      .child(h_flex().h(28).mx(6).gap(2).items_center()
+        .child(back)
+        .child(task)
+        .child(home));
+  }
+
+  detail(i, cx) {
+    const t = theme();
+    const parent = i.parent ? this.by(i.parent) : null;
+    const kids = this.kids(i.uid);
+    // The ref, state and priority live in the nav bar above the scroll; the
+    // body starts at the title, the one thing that grows with the issue.
     const parentRow = parent
       ? h_flex().id("kata-parent").h(20).flex_none().px(6).rounded(5).bg(t.raised).items_center()
         .cursor_pointer().hover((s) => s.bg(t.selected))
@@ -2141,14 +2147,13 @@ export default class Kata extends View {
       .when(i.related.length > 0, (el) => el.child(this.refField("Related", i.related, cx)))
       .children([this.metadata(i)].filter(Boolean));
     const body = v_flex().px(14).gap(5)
-      .child(top)
       .child(div().text_size(13.5).font_semibold().text_color(t.foreground).child(i.title))
       .child(meta)
       // The description is kata's own markdown, drawn as markdown: it is where
       // the work, the plan and the requirements usually are.
       .child(div().pt(4).child(TextView.markdown(`kata-body-${i.uid}`, i.body || "_No description._")))
       .child(this.thread(i));
-    return v_flex().id("kata-detail").w_full().flex_none().pb(16).child(this.nav(cx)).child(body);
+    return v_flex().id("kata-detail").w_full().flex_none().pb(16).child(body);
   }
 
   render(cx) {
@@ -2163,7 +2168,10 @@ export default class Kata extends View {
       .text_size(13).text_color(t.foreground);
     const issue = this.selected ? this.by(this.selected) : null;
     if (issue) {
+      // The nav bar sits between the head and the scroll, so it does not move
+      // with the body: the task, its state and the way back stay in view.
       return root.child(this.head(cx))
+        .child(this.nav(issue, cx))
         .child(v_flex().id("kata-detail-scroll").flex_1().min_h(0).overflow_y_scrollbar().pt(4)
           .child(this.detail(issue, cx)));
     }

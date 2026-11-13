@@ -71,7 +71,9 @@ manifest is the whole contract.
   `work.attention` value — a blue dot, red for `stuck`, purple for
   `needs-human`. Backlog: the `backlog` label or `someday` metadata — a small
   gray dot, quieter than ready's. Blocked by an open issue, or a parent whose
-  open children are all blocked — a gray outline square. Anything
+  open children are all blocked — a gray outline square. In flight and blocked
+  — claimed or attended, but an open issue blocks it — a blue filled square, so
+  a claim that cannot move does not look like work that is moving. Anything
   else open is ready — a gray filled circle. The marker is before each row, on
   the graph's cards and in the detail pill. Gray is quiet on purpose: most work
   is not ready, and ready and in-flight are what to find.

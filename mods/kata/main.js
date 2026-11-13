@@ -359,7 +359,9 @@ function ago(ms) {
 // Where an open issue stands. Kata itself has two statuses, open and closed, so
 // this is read from what the workflow leaves behind. Started: `kata claim` sets
 // the owner and the agent contract then sets `work.attention` (ok, needs-human
-// or stuck); either means the work is in flight. Backlog: the `backlog` label
+// or stuck); either means the work is in flight. In flight and blocked is its
+// own state, so a claimed task that cannot move does not look like it is moving.
+// Backlog: the `backlog` label
 // or `someday` metadata, which is also what `kata ready` leaves out. Blocked: an
 // open issue blocks it. What is left is ready. In flight wins over everything,
 // then backlog, since a deliberate "not now" is the more useful thing to know
@@ -369,7 +371,11 @@ function workState(t, i, blocked = false) {
   const attention = String(i.meta?.["work.attention"] ?? "").replace(/^["']+|["']+$/g, "");
   if (attention === "stuck") return { key: "stuck", label: "in progress — stuck", color: t.ansi1 };
   if (attention === "needs-human") return { key: "needs", label: "in progress — needs a person", color: t.ansi5 };
-  if (i.owner || attention) return { key: "started", label: `in progress${i.owner ? ` — ${i.owner}` : ""}`, color: t.ansi4 };
+  if (i.owner || attention) {
+    const who = i.owner ? ` — ${i.owner}` : "";
+    if (blocked) return { key: "started-blocked", label: `in progress, blocked${who}`, color: t.ansi4 };
+    return { key: "started", label: `in progress${who}`, color: t.ansi4 };
+  }
   const someday = i.meta?.someday;
   if (i.labels?.includes("backlog") || (someday != null && someday !== false && someday !== "false")) {
     return { key: "backlog", label: "backlog", color: t.dim };
@@ -381,9 +387,10 @@ function workState(t, i, blocked = false) {
 // The marker that says it. Gray is quiet on purpose — most work is not ready —
 // so the shapes carry it: a small gray dot is backlog (parked, quieter than
 // anything else open), a full gray dot is ready, an outline square is blocked.
-// In flight is the one with colour.
+// In flight is the one with colour; in flight but blocked is a filled square.
 function stateDot(t, st, size = 7) {
   if (st.key === "blocked") return div().size(size).rounded(size * 0.2).border_1().border_color(st.color);
+  if (st.key === "started-blocked") return div().size(size).rounded(size * 0.2).bg(st.color);
   const dot = div().size(st.key === "backlog" ? size * 0.6 : size).rounded(99).bg(st.color);
   return st.key === "backlog"
     ? div().size(size).flex().items_center().justify_center().child(dot)

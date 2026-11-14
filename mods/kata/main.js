@@ -48,6 +48,13 @@ const STATUSES = [
 // at, and a read that stops there says so and offers the next ceiling — `bigger`,
 // one click away, until there is no ceiling at all.
 const LIMIT = 1000;
+
+// How many events one look at the project's history holds. `kata events` only
+// walks forward from a cursor (`--after`), so the newest window is found by
+// asking where the events end — a handful of one-row probes — and read back
+// from there; after that every look polls forward from the last id seen,
+// which is the cursor kata designed the read for.
+const EVENTS = 250;
 // How many parents one read may go and ask for, one `kata show` each. A task
 // whose parent the list did not carry is drawn under it, so the tree reads
 // whole; past this many the task stands alone, which is where the panel was.
@@ -473,6 +480,200 @@ async function readComments(folder, on, uid, project) {
   }
 }
 
+// ---- the events ----
+
+// One event, as the panel draws it: the envelope's own id (the cursor later
+// reads move on from), what happened and who did it, when, and the issue it
+// hung on when there was one. `payload` stays whole — what each type keeps in
+// it is the type's own business, and `eventSay` is the one that reads it.
+function normalizeEvent(e) {
+  return {
+    id: typeof e?.event_id === "number" ? e.event_id : 0,
+    type: String(e?.type ?? ""),
+    actor: e?.actor ?? null,
+    at: Date.parse(e?.created_at) || 0,
+    issueUid: e?.issue_uid ?? null,
+    issueRef: e?.issue_short_id ?? null,
+    payload: e?.payload && typeof e.payload === "object" ? e.payload : {},
+  };
+}
+
+// One window of the event stream: everything after cursor `after`, oldest
+// first, the way kata hands it over. The same read serves the first window
+// (after a cursor just under the newest event) and every poll after it
+// (after the last id seen).
+async function readEvents(folder, on, after, limit, project) {
+  const args = ["events", "--after", String(after), "--limit", String(limit), "--json"];
+  if (project) args.push("--project", project);
+  let r;
+  try {
+    r = await exec("kata", args, { cwd: folder, on });
+  } catch {
+    return { error: "kata is not installed here, or it cannot start" };
+  }
+  if (r.code !== 0) return { error: refusal(r) };
+  let data;
+  try { data = JSON.parse(r.stdout); } catch { return { error: "kata answered in a shape this panel cannot read" }; }
+  if (data?.error) return { error: String(data.error.message ?? data.error.code ?? "kata refused the read") };
+  return {
+    events: (data?.events ?? []).map(normalizeEvent).filter((e) => e.id > 0),
+    // The cursor the next poll moves to: kata's own answer, else the last id
+    // this window ended on (`--after` is exclusive, so the last id is the
+    // cursor). `reset_required` says the cursor can no longer be trusted.
+    next: typeof data?.next_after_id === "number" ? data.next_after_id : null,
+    reset: data?.reset_required === true,
+  };
+}
+
+// Whether the project has any event after cursor `after`: a one-row read, and
+// the probe the search below is made of.
+async function eventsAfter(folder, on, after, project) {
+  const out = await readEvents(folder, on, after, 1, project);
+  return out.error ? null : out.events.length > 0;
+}
+
+// Where the project's events end: the largest cursor that still has an event
+// after it. kata walks its events forward only, so finding the newest window
+// means finding the end first — doubling a guess until it lands past the end,
+// then bisecting the gap. A dozen or so one-row reads, run once per project
+// (the cursor the panel keeps afterwards moves forward for free).
+async function lastEventId(folder, on, project) {
+  let lo = 0;
+  let hi = 1024;
+  for (;;) {
+    const has = await eventsAfter(folder, on, hi, project);
+    if (has == null) return null;
+    if (!has) break;
+    lo = hi;
+    hi *= 2;
+    // Past a billion events even a made-up ceiling is honest: lo is far
+    // enough under the end that the window it opens is history enough.
+    if (hi > 1 << 30) return lo;
+  }
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    const has = await eventsAfter(folder, on, mid, project);
+    if (has == null) return null;
+    if (has) lo = mid;
+    else hi = mid;
+  }
+  return lo;
+}
+
+// The first line of a longer text, collapsed and cut — what a comment or a
+// close message contributes to a row that has one line to spare.
+function lead(body, width = 90) {
+  const text = String(body ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text.length > width ? `${text.slice(0, width)}…` : text;
+}
+
+// The actor a `notify.*` metadata key names. Kata writes the inbox address
+// base64-encoded into the key (an actor's name is not a safe key), so the row
+// says the name rather than the encoding; anything that does not decode is
+// shown as it was written.
+function b64(text) {
+  const s = String(text ?? "").replace(/=+$/, "");
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let out = "";
+  let acc = 0;
+  let bits = 0;
+  for (const ch of s) {
+    const i = alphabet.indexOf(ch);
+    if (i < 0) return String(text);
+    acc = (acc << 6) | i;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out += String.fromCharCode((acc >> bits) & 0xff);
+    }
+  }
+  // The bytes are UTF-8: percent-encode each and let `decodeURIComponent`
+  // turn them back into text, the one decoder every ES runtime carries.
+  try {
+    return decodeURIComponent(out.split("").map((c) => `%${(c.charCodeAt(0) & 0xff).toString(16).padStart(2, "0")}`).join(""));
+  } catch {
+    return out;
+  }
+}
+
+// What one event says, as the row reads it: the verb (with the issue's ref
+// chip between it and whatever comes after), an optional dim tail on the same
+// line, and an optional second line under it. A metadata event whose diff
+// carries a `notify.*` key is an attention request — the one notification kata
+// leaves in the stream — so it says who was asked and why, which is the whole
+// of what the request was.
+function eventSay(ev) {
+  const p = ev.payload;
+  switch (ev.type) {
+    case "issue.created": return { verb: "created" };
+    case "issue.updated": return p.title != null ? { verb: "retitled" } : { verb: "edited" };
+    case "issue.commented": return { verb: "commented on", detail: lead(p.body) };
+    case "issue.comment_edited": return { verb: "edited a comment on" };
+    case "issue.closed": return { verb: "closed", tail: String(p.reason ?? ""), detail: lead(p.message) };
+    case "issue.reopened": return { verb: "reopened" };
+    case "issue.assigned": return { verb: "assigned", tail: p.owner ? `to ${p.owner}` : "" };
+    case "issue.labeled": return { verb: "labeled", tail: String(p.label ?? "") };
+    case "issue.unlabeled": return { verb: "unlabeled", tail: String(p.label ?? "") };
+    case "issue.linked":
+      return { verb: "linked", tail: `↔ #${p.to_short_id ?? "?"} · ${p.type ?? "related"}` };
+    case "issue.links_changed": return { verb: "edited the links on", tail: linksTail(p) };
+    case "issue.soft_deleted": return { verb: "deleted" };
+    case "issue.metadata_updated": return metadataSay(p.diff);
+    case "project.created": return { verb: "created the project" };
+    case "project.metadata_updated": return { verb: "set", tail: metadataTail(p.diff) };
+    default: return { verb: ev.type.split(".").pop().replace(/_/g, " ") || "did a thing" };
+  }
+}
+
+// A link edit counts what moved, in the blockers' own direction: "added 2
+// blockers · removed 1". Any shape this does not know is no tail at all —
+// "edited the links on" alone still says what happened.
+function linksTail(p) {
+  const parts = [];
+  const add = (n, what) => { if (n > 0) parts.push(`added ${n} ${what}`); };
+  const cut = (n, what) => { if (n > 0) parts.push(`removed ${n} ${what}`); };
+  add((p.blocked_by_added ?? []).length, "blocker");
+  cut((p.blocked_by_removed ?? []).length, "blocker");
+  add((p.blocks_added ?? []).length, "blocks");
+  cut((p.blocks_removed ?? []).length, "blocks");
+  add((p.related_added ?? []).length, "related");
+  cut((p.related_removed ?? []).length, "related");
+  return parts.join(" · ");
+}
+
+// A metadata event: an attention request when the diff carries a `notify.*`
+// key — "asked <who> to look", the request's message under it — otherwise the
+// keys that changed, at most two named and the rest counted.
+function metadataSay(diff) {
+  const keys = Object.keys(diff ?? {});
+  const notifyKey = keys.find((k) => k.startsWith("notify."));
+  if (notifyKey) {
+    const who = b64(notifyKey.slice("notify.".length));
+    const to = diff[notifyKey]?.to;
+    if (to && typeof to === "object") {
+      return { verb: `asked ${who || "someone"} to look`, detail: lead(to.message) };
+    }
+    return { verb: `cleared the ask for ${who || "someone"}` };
+  }
+  return { verb: "set", tail: metadataTail(diff) };
+}
+
+// The keys a metadata or project event changed, as `key → what it became`.
+// At most two on the line; a wider edit is counted rather than spelled.
+function metadataTail(diff) {
+  const keys = Object.keys(diff ?? {});
+  const parts = keys.slice(0, 2).map((k) => {
+    const to = diff[k]?.to;
+    const said = to == null ? "cleared"
+      : typeof to === "object" ? lead(JSON.stringify(to), 40)
+      : lead(String(to), 40);
+    return `${k} → ${said}`;
+  });
+  if (keys.length > 2) parts.push(`+${keys.length - 2} more`);
+  return parts.join(" · ");
+}
+
 // Metadata is a bag of keys anyone can write. The panel already draws the one it
 // understands (`work.branch`, as Branch), so the rest is what this lists: every
 // other key, in name order, its value as written — text as text, anything
@@ -734,6 +935,20 @@ export default class Kata extends View {
     // it ends at the tree. Opening from the tree starts a new one, so the
     // tree is always where an empty trail ends.
     this.trail = [];
+    // The events view: the project's own history, newest first, in place of
+    // the tree. `events` holds what has been read (newest first), `cursor` the
+    // id the next poll moves on from (null until the end of the stream has
+    // been found once), `more` whether older events may still be asked for.
+    // Like the search it belongs to the minute, not the read — but it is part
+    // of the space's carried state (`events` in the snapshot), because a trail
+    // that came out of the events view walks back into it.
+    this.eventsOpen = false;
+    this.events = [];
+    this.eventsCursor = null;
+    this.eventsReady = false;
+    this.eventsBusy = false;
+    this.eventsError = null;
+    this.eventsMore = true;
     this.folder = null;      // the folder the shown project was read from
     this.loading = false;
     this.ready = false;
@@ -744,7 +959,10 @@ export default class Kata extends View {
     // Kata has no file to watch — issues change from terminals, agents and the
     // `kata` CLI — so the panel asks again on a timer. Fifteen seconds is the
     // pace of `kata tui`'s own refresh and costs one `exec`.
-    cx.timer.every(15000, (cx) => this.refresh(cx));
+    cx.timer.every(15000, (cx) => {
+      this.refresh(cx);
+      if (this.eventsOpen) this.pollEvents(cx);
+    });
     // The other timer reads no data: it only notices that the place moved — a
     // space, a folder, a checkout — and asks again then. Nothing is redrawn
     // unless it did.
@@ -778,6 +996,7 @@ export default class Kata extends View {
       })),
       selected: this.selected,
       trail: this.trail,
+      events: this.eventsOpen,
       collapsed: [...this.collapsed],
     });
   }
@@ -798,6 +1017,7 @@ export default class Kata extends View {
     this.picked = new Map();
     this.selected = null;
     this.trail = [];
+    this.eventsOpen = false;
     this.collapsed = new Set();
   }
 
@@ -826,6 +1046,7 @@ export default class Kata extends View {
       }
       if (typeof s.selected === "string" || s.selected === null) this.selected = s.selected;
       if (Array.isArray(s.trail)) this.trail = s.trail.filter((u) => typeof u === "string");
+      if (typeof s.events === "boolean") this.eventsOpen = s.events;
       if (Array.isArray(s.collapsed))
         this.collapsed = new Set(s.collapsed.filter((u) => typeof u === "string"));
       if (Array.isArray(s.picked)) {
@@ -875,6 +1096,13 @@ export default class Kata extends View {
       this.ceiling = LIMIT;
       this.failure = null;
       this.missing = false;
+      // Another project's history is another stream: what was read belongs to
+      // the place it was read in, and the cursor with it.
+      this.events = [];
+      this.eventsCursor = null;
+      this.eventsReady = false;
+      this.eventsError = null;
+      this.eventsMore = true;
       // The carried state is the arriving space's now, whatever the key holds
       // — or a fresh start where it holds nothing. The timer can run this, so
       // nothing is written here: the write is the panel's own doing, a click.
@@ -974,6 +1202,9 @@ export default class Kata extends View {
       this.trail = this.trail.filter((uid) => known.has(uid));
       if (this.selected && !known.has(this.selected)) this.selected = null;
       settle(cx);
+      // The events view polls on its own cursor; a fresh read of the place is
+      // when its first window is looked for too.
+      if (this.eventsOpen) this.pollEvents(cx);
       // A new read is a new look at the open issue's thread too.
       if (this.selected) this.ensureDetail(cx, true);
       // The rows land first, and then their parents are asked for: a task whose
@@ -1049,6 +1280,10 @@ export default class Kata extends View {
     const have = new Set(this.issues.map((i) => i.uid));
     const keep = new Set();
     const need = this.issues.map((i) => i.parent).filter(Boolean);
+    // The open issue stays whatever the read thinks of it: one opened from the
+    // events view is often an issue no filter would have shown, and a detail
+    // view that folds itself away mid-read is no detail view.
+    if (this.selected) need.push(this.selected);
     const open = this.selected ? this.by(this.selected) : null;
     if (open) for (const r of [...open.blockedBy, ...open.blocks, ...open.related]) need.push(r.uid);
     while (need.length) {
@@ -1139,6 +1374,9 @@ export default class Kata extends View {
   // uses; clicking a row, or the terminal, takes the keyboard back.
   toggleSearch(cx) {
     this.branchOpen = false;
+    // The search searches the tree's list, so it does not open over the events:
+    // a magnifier click while the events are up is a click back to the issues.
+    this.eventsOpen = false;
     const open = !this.searchOpen;
     if (!open) this.clearSearch();
     else this.searchOpen = true;
@@ -1326,7 +1564,9 @@ export default class Kata extends View {
     cx.notify();
   }
 
-  // The way out: the trail goes and the tree is back, whatever depth it was at.
+  // The way out: the trail goes and the trail's home is back — the tree, or
+  // the events view when the trail was walked out of one. `All issues` goes
+  // further and puts the events view away too (see `goTree`).
   dismiss(cx) {
     this.trail = [];
     this.selected = null;
@@ -1338,6 +1578,275 @@ export default class Kata extends View {
   // the one the last step came from.
   cameFrom() {
     return this.trail.length > 0 ? this.by(this.trail[this.trail.length - 1]) : null;
+  }
+
+  // ---- the events view ----
+
+  // The events view in place of the tree, the way the branch chooser and the
+  // search take the panel: one scroll area, nothing floating over anything.
+  // Opening it asks for the stream (the first look finds where the events end,
+  // every look after that polls forward), closing it puts the tree back with
+  // its filters exactly as they were.
+  toggleEvents(cx) {
+    const open = !this.eventsOpen;
+    this.eventsOpen = open;
+    if (open) {
+      this.branchOpen = false;
+      this.clearSearch();
+      this.pollEvents(cx);
+    }
+    this.save();
+    cx.notify();
+  }
+
+  // The way out of the tree and back to it: what `All issues` does, which is
+  // `dismiss` plus putting the events view away — the chevron's own way out
+  // (`dismiss`, below) goes back to wherever the trail started, events
+  // included, and is not this button's to second-guess.
+  goTree(cx) {
+    this.eventsOpen = false;
+    this.dismiss(cx);
+  }
+
+  // One look at the stream. The first look has to find where the events end
+  // before it can ask for the newest window (see `lastEventId`); every look
+  // after that is one poll from the cursor. A poll that answers "start over"
+  // (`reset_required`) drops what was read and lets the next tick search
+  // again — the stream rebuilds itself rather than showing a history with a
+  // hole in it.
+  pollEvents(cx) {
+    const origin = this.origin;
+    if (!origin?.folder || !this.resolved || this.resolved.missing) return;
+    if (this.eventsBusy) return;
+    const project = this.resolved.bound ? null : this.resolved.name;
+    this.eventsBusy = true;
+    cx.spawn(async (cx) => {
+      try {
+        if (this.eventsCursor == null) {
+          const last = await lastEventId(origin.folder, origin.on, project);
+          if (origin.folder !== this.origin?.folder || origin.on !== this.origin?.on) return;
+          if (last == null) {
+            this.eventsError = "kata would not say where its events end";
+            this.eventsReady = true;
+            return;
+          }
+          this.eventsCursor = Math.max(0, last - (EVENTS - 1));
+        }
+        const out = await readEvents(origin.folder, origin.on, this.eventsCursor, EVENTS, project);
+        if (origin.folder !== this.origin?.folder || origin.on !== this.origin?.on) return;
+        if (out.reset) {
+          this.events = [];
+          this.eventsCursor = null;
+          this.eventsReady = false;
+          return cx.notify();
+        }
+        if (out.error) {
+          this.eventsError = out.error;
+          if (!this.events.length) this.eventsReady = true;
+          return cx.notify();
+        }
+        this.eventsError = null;
+        this.mergeEvents(out.events);
+        this.eventsCursor = out.next
+          ?? (out.events.length ? out.events[out.events.length - 1].id : this.eventsCursor);
+        this.eventsReady = true;
+        cx.notify();
+      } finally {
+        this.eventsBusy = false;
+      }
+    });
+  }
+
+  // Fresh events join what is already on screen: one map keyed by id, sorted
+  // newest first. A stream that is reread from zero every 15 s is a stream
+  // that flickers; polls only ever add what is genuinely new (the cursor has
+  // moved past the rest), and `Load earlier` adds what it was asked for — so
+  // nothing merged is ever thrown away to keep the array short.
+  mergeEvents(fresh) {
+    if (!fresh.length) return;
+    const seen = new Map(this.events.map((e) => [e.id, e]));
+    for (const e of fresh) seen.set(e.id, e);
+    this.events = [...seen.values()].sort((a, b) => b.id - a.id);
+  }
+
+  // The window before the one on screen. kata walks forward only, so going
+  // back means walking a cursor backwards: ask for the events just under the
+  // oldest one held, and when a page comes back with nothing new (other
+  // projects' events interleave in the ids, so gaps happen), step back — and
+  // keep doubling the step, because a page that came back with nothing new is
+  // kata itself proving the whole window it covered had nothing of this
+  // project's in it. A few pages at most, on a click, never on a timer.
+  loadEarlier(cx) {
+    const origin = this.origin;
+    if (!origin?.folder || !this.resolved || this.resolved.missing) return;
+    if (this.eventsBusy || !this.events.length) return;
+    const project = this.resolved.bound ? null : this.resolved.name;
+    const held = new Set(this.events.map((e) => e.id));
+    const oldest = this.events[this.events.length - 1].id;
+    this.eventsBusy = true;
+    cx.spawn(async (cx) => {
+      try {
+        const got = [];
+        const seen = new Set(held);
+        let at = oldest - 1;
+        let step = EVENTS;
+        for (let hop = 0; hop < 12 && got.length < EVENTS && at > 0; hop++) {
+          const out = await readEvents(origin.folder, origin.on, Math.max(0, at - step), EVENTS, project);
+          if (origin.folder !== this.origin?.folder || origin.on !== this.origin?.on) return;
+          if (out.error) {
+            this.eventsError = out.error;
+            break;
+          }
+          const fresh = out.events.filter((e) => e.id < oldest && !seen.has(e.id));
+          if (fresh.length) {
+            for (const e of fresh) seen.add(e.id);
+            got.push(...fresh);
+            at = Math.min(...fresh.map((e) => e.id)) - 1;
+            step = EVENTS;
+          } else {
+            at = Math.max(0, at - step);
+            step *= 2;
+          }
+        }
+        if (got.length) {
+          this.mergeEvents(got);
+          cx.notify();
+        }
+        // Past the beginning there is nothing earlier to ask for; anywhere
+        // short of it, the button stays for the next click.
+        if (at <= 0) this.eventsMore = false;
+      } finally {
+        this.eventsBusy = false;
+      }
+    });
+  }
+
+  // A ref chip in the events stream. Most events hang on issues the read
+  // already knows; one it does not — a closed issue under an Open filter, a
+  // task of another branch — is fetched with `kata show` first, so the detail
+  // view has something to show when it opens. A fetch that comes back with
+  // nothing opens nothing: a dead chip is quieter than an empty detail.
+  openEventIssue(ev, cx) {
+    const uid = ev.issueUid;
+    if (!uid) return;
+    if (this.by(uid)) return this.open(uid, cx);
+    const origin = this.origin;
+    const scope = this.resolved?.bound ? null : this.resolved?.name;
+    cx.spawn(async (cx) => {
+      const i = await showIssue(origin.folder, origin.on, uid, scope);
+      if (origin.folder !== this.origin?.folder || origin.on !== this.origin?.on) return;
+      if (!i) return;
+      if (!this.by(i.uid)) this.ancestors.set(i.uid, i);
+      this.open(uid, cx);
+      cx.notify();
+    });
+  }
+
+  // The day an event falls on, as the stream groups them: one key per local
+  // calendar day, so the headers collect what one day saw.
+  dayKey(ms) {
+    const d = new Date(ms);
+    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  }
+
+  // A day header's words: today and yesterday by name, the rest by date —
+  // with the year when it is not this one, because history older than a
+  // year reads bare without it.
+  dayLabel(ms) {
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const d = new Date(ms);
+    const now = new Date();
+    if (this.dayKey(ms) === this.dayKey(now.getTime())) return "Today";
+    if (this.dayKey(ms) === this.dayKey(now.getTime() - 86400000)) return "Yesterday";
+    const said = `${months[d.getMonth()]} ${d.getDate()}`;
+    return d.getFullYear() === now.getFullYear() ? said : `${said}, ${d.getFullYear()}`;
+  }
+
+  // The stream itself: the newest first, grouped under day headers, each row
+  // one line — when it happened, who, what, and the issue it hung on — with a
+  // second line where the event carried words worth reading (a comment, a
+  // close message, a notification). Where the read has nothing yet, it says
+  // so; where a poll failed with rows on screen, an error line says so above
+  // them, the way the tree does.
+  eventsView(cx) {
+    const t = theme();
+    if (!this.events.length) {
+      if (!this.eventsReady) {
+        return v_flex().id("kata-events").flex_1().min_h(0).items_center().justify_center()
+          .child(div().text_size(12).text_color(t.dim).child(this.eventsError ? "The events would not read" : "Reading events…"))
+          .when(Boolean(this.eventsError), (el) => el.child(div().px(24).text_size(11).text_color(t.dim).child(this.eventsError)));
+      }
+      return v_flex().id("kata-events").flex_1().min_h(0).items_center().justify_center().gap(4)
+        .child(div().text_size(12.5).text_color(t.muted).child(this.eventsError ? "The events would not read" : "No events yet"))
+        .child(div().px(24).text_size(11).text_color(t.dim).child(this.eventsError ?? "What happens in this project shows up here."));
+    }
+    const list = v_flex().id("kata-events").flex_1().min_h(0).overflow_y_scrollbar().py(4);
+    if (this.eventsError) {
+      list.child(div().px(14).pt(4).pb(2).text_size(10.5).text_color(t.blocked).truncate()
+        .tooltip(this.eventsError).child(this.eventsError));
+    }
+    list.child(div().px(16).pb(2).text_size(10).text_color(t.dim)
+      .child(`${this.events.length} event${this.events.length === 1 ? "" : "s"} · newest first`));
+    let day = null;
+    for (const ev of this.events) {
+      const key = this.dayKey(ev.at);
+      if (key !== day) {
+        day = key;
+        list.child(div().px(16).pt(6).pb(2).text_size(10).font_semibold().text_color(t.dim)
+          .child(this.dayLabel(ev.at)));
+      }
+      list.child(this.eventRow(ev, cx));
+    }
+    if (this.eventsMore) list.child(this.earlierButton(cx));
+    return list;
+  }
+
+  // One event, one row: a time in the left column (the day header above it
+  // carries the date), then the actor, the verb, the issue's ref chip and
+  // whatever tail the event has. Only the chip is a button — a row that opens
+  // an issue when the chip in it is the thing to click is a row with two
+  // targets, and the miss is always the one that costs.
+  eventRow(ev, cx) {
+    const t = theme();
+    const say = eventSay(ev);
+    const at = new Date(ev.at);
+    const time = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+    const known = ev.issueUid ? this.by(ev.issueUid) : null;
+    const title = known?.title
+      ?? (ev.type === "issue.created" ? lead(ev.payload.title, 60) : null);
+    const chip = ev.issueUid ? h_flex().id(`kata-ev-${ev.id}`).h(18).flex_none().px(5).gap(4).rounded(5).bg(t.raised)
+      .items_center().max_w(190).cursor_pointer().hover((s) => s.bg(t.selected))
+      .on_click((_e, cx) => this.openEventIssue(ev, cx))
+      .child(div().flex_none().text_size(10.5).text_color(t.muted).child(`#${ev.issueRef ?? "?"}`))
+      .when(Boolean(title), (el) => el.child(div().min_w(0).truncate().text_size(10.5).text_color(t.muted).child(String(title))))
+      : null;
+    const line = h_flex().flex_1().min_w(0).gap(5).items_center()
+      .child(div().flex_none().max_w(110).truncate().text_size(11).font_semibold().text_color(t.muted)
+        .child(ev.actor ?? "kata"))
+      .child(div().flex_none().text_size(11.5).text_color(t.foreground).child(say.verb))
+      .when(Boolean(chip), (el) => el.child(chip))
+      .when(Boolean(say.tail), (el) => el.child(div().min_w(0).flex_1().truncate().text_size(11).text_color(t.dim)
+        .child(String(say.tail))))
+      .when(!say.tail, (el) => el.child(div().flex_1()));
+    return v_flex().flex_none().mx(6).px(8).py(3).gap(1).rounded(6)
+      .child(h_flex().items_start().gap(8)
+        .child(div().w(34).flex_none().text_size(10).text_color(t.dim).child(time))
+        .child(line))
+      .when(Boolean(say.detail), (el) => el
+        .child(div().min_w(0).truncate().pl(42).text_size(10.5).text_color(t.dim).child(say.detail)));
+  }
+
+  // The window before the one on screen, one click away, the way the tree's
+  // ceiling offers Load more. The rows on screen stay while it walks back.
+  earlierButton(cx) {
+    const t = theme();
+    return h_flex().id("kata-earlier").h(24).flex_none().mx(6).mt(2).px(10).gap(6).rounded(6).items_center()
+      .cursor_pointer().hover((s) => s.bg(t.hover))
+      .tooltip(`Ask for the ${EVENTS} events before these`)
+      .on_click((_e, cx) => this.loadEarlier(cx))
+      .child(svg(`${ICONS}/chevron-down.svg`).size(11).flex_none().text_color(t.dim))
+      .child(div().flex_none().text_size(11.5).text_color(t.muted).child("Load earlier"))
+      .child(div().flex_1());
   }
 
   // ---- the open issue's thread ----
@@ -1697,7 +2206,7 @@ export default class Kata extends View {
     // Search and folding are the list's, so they are drawn where there is a list
     // to draw: not over a note, not behind an open issue (which takes the panel),
     // and no folding while a search has flattened the tree into results.
-    const list = this.ready && !this.missing && this.issues.length > 0 && !this.selected;
+    const list = this.ready && !this.missing && this.issues.length > 0 && !this.selected && !this.eventsOpen;
     const foldable = list && !this.searching();
     return h_flex().id("kata-head").h(42).flex_none().px(14).gap(8).items_center()
       .border_b(1).border_color(t.border)
@@ -1707,6 +2216,10 @@ export default class Kata extends View {
           .text_size(10.5).max_w(170).truncate().tooltip(guessed ? `No kata binding here: the git repo's name, ${name}` : "The bound kata project")
           .child(name)))
       .child(div().flex_1())
+      .when(this.ready && !this.missing, (el) => el
+        .child(this.iconButton("kata-events", "pulse",
+          this.eventsOpen ? "Back to the issues" : "Events: what has happened in this project",
+          (_e, cx) => this.toggleEvents(cx), false, this.eventsOpen)))
       .when(this.ready && !this.missing && !this.nothingToShow(), (el) => el
         .child(this.iconButton("kata-graph", "graph",
           this.selected ? "Show this issue's graph: what it hangs from, blocks and relates to"
@@ -2088,6 +2601,9 @@ export default class Kata extends View {
       .rounded(6).cursor_pointer().hover((s) => s.bg(t.hover))
       .when(Boolean(came), (el) => el
         .tooltip(`Back to #${came.ref} — ${came.title}${behind}`))
+      // With nothing behind it the step goes to where the trail began — the
+      // tree, or the events view the first issue was opened from.
+      .when(!came, (el) => el.tooltip(this.eventsOpen ? "Back to the events" : "All issues"))
       .on_click((_e, cx) => (came ? this.back(cx) : this.dismiss(cx)))
       .child(svg(`${ICONS}/chevron-left.svg`).size(12).text_color(came ? t.muted : t.dim));
     // The ref, what state it is in, and its priority: the three things that
@@ -2108,7 +2624,7 @@ export default class Kata extends View {
     const home = h_flex().id("kata-all").h(28).flex_none().px(8).gap(4).rounded(6).items_center()
       .cursor_pointer().hover((s) => s.bg(t.hover))
       .tooltip("All issues: the whole tree, and the trail behind it cleared")
-      .on_click((_e, cx) => this.dismiss(cx))
+      .on_click((_e, cx) => this.goTree(cx))
       .child(svg(`${ICONS}/icon.svg`).size(11).flex_none().text_color(t.dim))
       .child(div().flex_none().text_size(11.5).text_color(t.muted).child("All issues"));
     return v_flex().id("kata-nav").flex_none().border_b(1).border_color(t.border)
@@ -2192,21 +2708,23 @@ export default class Kata extends View {
     }
     return root
       .child(this.head(cx))
-      .child(this.filters(cx))
-      .when(this.searchOpen, (el) => el.child(this.searchBar(cx)))
-      // The default filter landed on a branch with nothing on it: say so, so an
-      // unexpected list is not read as an empty project.
-      .when(this.fellBack(), (el) => el
-        .child(div().px(14).pt(6).text_size(11).text_color(t.dim).truncate()
-          .child(`Nothing on ${this.chosen()} — showing every branch`)))
-      // A read that failed while rows are on screen says so over them, rather
-      // than taking the panel away from what the person is reading.
-      .when(Boolean(this.failure), (el) => el
-        .child(div().px(14).pt(6).text_size(11).text_color(t.blocked).truncate()
-          .tooltip(this.failure.message).child(this.failure.message)))
-      .when(!this.ready, (el) => el.child(this.note("Reading kata…", `Asking for ${this.status} issues.`, null)))
-      .when(this.ready, (el) => el.child(this.branchOpen
-        ? this.chooser(cx)
-        : this.searching() ? this.results(cx) : this.tree(cx)));
+      .when(this.eventsOpen, (el) => el.child(this.eventsView(cx)))
+      .when(!this.eventsOpen, (el) => el
+        .child(this.filters(cx))
+        .when(this.searchOpen, (el) => el.child(this.searchBar(cx)))
+        // The default filter landed on a branch with nothing on it: say so, so an
+        // unexpected list is not read as an empty project.
+        .when(this.fellBack(), (el) => el
+          .child(div().px(14).pt(6).text_size(11).text_color(t.dim).truncate()
+            .child(`Nothing on ${this.chosen()} — showing every branch`)))
+        // A read that failed while rows are on screen says so over them, rather
+        // than taking the panel away from what the person is reading.
+        .when(Boolean(this.failure), (el) => el
+          .child(div().px(14).pt(6).text_size(11).text_color(t.blocked).truncate()
+            .tooltip(this.failure.message).child(this.failure.message)))
+        .when(!this.ready, (el) => el.child(this.note("Reading kata…", `Asking for ${this.status} issues.`, null)))
+        .when(this.ready, (el) => el.child(this.branchOpen
+          ? this.chooser(cx)
+          : this.searching() ? this.results(cx) : this.tree(cx))));
   }
 }

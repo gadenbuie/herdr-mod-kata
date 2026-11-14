@@ -45,10 +45,13 @@ Kata  [field-guide]                       🔍 ⤢ ↻
   to do:
   - **↻**, always drawn, which turns while a read is in flight (`.spin(900)`,
     drawn by GPUI, no timer of ours).
+  - **pulse** (a heartbeat line) once a read has answered — the events view
+    (below), filled `selected` while it is showing.
   - **search** (a magnifier; filled `selected` while its field is open) only
     while there is a list on screen — behind an open issue, over a note,
     over an empty tree, or while the first read is still in flight there is
-    nothing to search.
+    nothing to search. It goes while the events view is showing too: a
+    magnifier click there is a click back to the issues.
   - **fold/unfold all** (one button for both) only while the tree has
     something foldable: with anything folded it unfolds; with everything open
     it folds every parent. It goes while a search has flattened the tree into
@@ -178,6 +181,55 @@ closes the field and drops the query, while a re-read of the same place — the
 15 s timer, ↻ — keeps both, because the person is still looking for the same
 thing.
 
+### The events
+
+The **pulse button** in the header (drawn once a read has answered, next to
+the magnifier) swaps the tree for the project's **event stream** — what `kata
+events` records, newest first, in place of the tree the way the branch list
+and the search take the panel. The filter row goes with it: a stream is not a
+filtered list, and status pills over it would be furniture.
+
+- **One row per event**: the time in a left column (the day header above it
+  carries the date — `Today`, `Yesterday`, else the date, with the year when
+  it is not this one), then who acted, what they did, and the issue it hung
+  on. `created`, `commented on`, `closed · done`, `reopened`, `labeled
+  needs-review`, `assigned to garrick`, `set work.attention → needs-human` —
+  each type in the words a person would use for it, and a type the panel does
+  not know falls back to its own name, so a kata that learns new events is a
+  stream with odd rows, not a broken one.
+- **The issue is a chip, and the chip opens it.** An event's ref is drawn the
+  way the detail view draws a ref chip — `#ref`, and a title preview when the
+  read knows the issue — and clicking it opens that issue's detail view. One
+  the read does not carry (a closed issue under an Open filter, a task of
+  another branch) is fetched with `kata show` first, so the detail view opens
+  on an issue rather than on nothing; a fetch that comes back with nothing
+  opens nothing.
+- **`‹` goes back to the events.** The trail works as it does from the tree —
+  following a chip inside the detail view is one step further, `‹` walks back
+  one issue at a time — but where an empty trail ends is where the trail
+  began, and a trail begun in the events ends there. The chevron's tooltip
+  says so (`Back to the events`); **All issues** at the right still means the
+  tree, and closes the events view with the trail.
+- **Words the event carried get their second line.** A comment's first line, a
+  close's message, and — the reason the stream exists — an **attention
+  request**: kata leaves a notification in the stream as a `notify.*` metadata
+  change, and the row reads it as `asked <who> to look` with the request's
+  message under it. There is no other place in the panel that shows one; this
+  is it, without a notifications feature around it.
+- **The first look finds where the events end.** kata walks its stream
+  forward from a cursor only (`kata events --after N`), so the newest window
+  is found by bisecting for the end — a dozen or so one-row reads, run once
+  per project, under a `Reading events…` note — and read back from there.
+  Every look after that is one poll from the last id seen, on the same 15 s
+  timer as the list, and fresh events join what is on screen rather than
+  replacing it. `reset_required` (kata saying the cursor can no longer be
+  trusted) drops the stream and lets the next tick find the end again.
+- **Load earlier**, at the bottom, asks for the window before the one on
+  screen — walking the cursor backwards a window at a time, since a gap in
+  the ids (other projects' events interleave) is a page that comes back empty,
+  not an end. The rows on screen stay while it walks; a stream read back to
+  its beginning says so by taking the button away.
+
 **The tree**, one scroll area, 26 px rows, 6 px side margins, rounded 6,
 `hover` fill:
 
@@ -283,7 +335,8 @@ line in `blocked` above them, never an empty panel.
 
 - **Read-only, deliberately.** It writes nothing — no claim, no close, no
   comment, no edit — and the only reads are one `kata list` per refresh plus a
-  `kata show` for each parent that list did not carry. A search costs no read
+  `kata show` for each parent that list did not carry, and — while the events
+  view is showing — one `kata events` poll from the cursor. A search costs no read
   at all: it is a pass over the rows already in hand. Adding writes would need
   a claim flow, an actor, and a confirmation for the destructive ones; that is
   a different mod, and a person can do all of it from `kata tui` in a terminal.
@@ -291,7 +344,8 @@ line in `blocked` above them, never an empty panel.
   the ↻ button, which also forgets which project the place is, so `kata init`
   shows up on a click instead of on the next space change. There is no file to
   watch: issues change from terminals, agents and the CLI. Rows stay on screen
-  while a read runs and after one fails.
+  while a read runs and after one fails. The events view rides the same timer
+  when it is showing — one poll from its cursor, nothing when it is closed.
 - **The branch filter follows the checkout.** A space on the repo's own branch
   (`main`, or whatever `origin/HEAD` says) is not about one branch, so every
   task shows; a space on any other branch — a worktree, a topic checkout —
@@ -309,7 +363,7 @@ line in `blocked` above them, never an empty panel.
   answer that lands late is dropped, so a status click during a slow read
   cannot paint the old filter's rows under the new filter's buttons.
 - **Nothing is remembered once the place moves.** Rows, folds, the open issue,
-  the trail behind it and the parents fetched for it all belong to the space
+  the trail behind it, the events read so far and the parents fetched for it all belong to the space
   they came from; switching space, or `cd`-ing to another repo, starts clean.
   State that survives a *re-read* of the same place (folds, an open issue, the
   branch picks, parents a task still points at, the read's ceiling) stays,
@@ -319,7 +373,10 @@ line in `blocked` above them, never an empty panel.
 - **The trail is the issues, not a browser history.** Following a ref chip or
   the parent chip is one step further in; opening a row in the tree starts a
   new trail at that row, which is why the tree is always where an empty trail
-  ends. `‹` walks the steps one at a time, `All issues` clears them. A status
+  ends. `‹` walks the steps one at a time, `All issues` clears them. A trail
+  begun in the events view ends there instead — the tree is the home only when
+  the tree is where the walking started — and `All issues` means the tree from
+  anywhere, closing the events view with the trail. A status
   pick, a moved place and the ↻ button all forget the trail, and a read that
   no longer has an issue drops that step: the panel never offers a step it
   cannot take.
@@ -455,6 +512,30 @@ kata list --status <open|closed|all> --limit 1000 --include-total --json
   parent is the `parent` link running from child to parent; a block runs from
   blocker to blocked). A parent that answers no, or a 25th parent in one read,
   leaves the task standing alone — which is where the panel started.
+- **The events read, one window at a time**:
+
+  ```sh
+  kata events --after <cursor> --limit 250 --json
+  ```
+
+  kata walks its stream forward only — oldest first, up to `--limit`, from an
+  exclusive `--after` cursor — so the newest window takes two steps: find
+  where the events end (bisecting with one-row reads: double a guess past the
+  end, then split the gap, a dozen or so tiny reads run once per project),
+  then ask for the window under it. From there the panel keeps the cursor —
+  kata's own `next_after_id` when the window filled, else the last id seen —
+  and every look is one poll forward, new events joining what is on screen.
+  `reset_required` says the cursor can no longer be trusted; the stream is
+  dropped and the next tick finds the end again. An event is normalized on
+  arrival to what a row draws: id, type, actor, when, and the issue it hung
+  on, with the payload left whole for the row's own reading of it.
+- **`Load earlier` walks the cursor backwards**, a window at a time: ask for
+  the window under the oldest event held, and when a page comes back with
+  nothing new (other projects' events interleave in the ids, so a gap is a
+  page with nothing of this project's in it), step back — doubling the step,
+  because a page that answers with nothing new is kata proving the window it
+  covered holds nothing of this project's. Reaching the beginning takes the
+  button away.
 - A refusal is shown as kata wrote it — `kata` prints
   `{error: {message, hint}}` on stderr, so "no .kata.toml ancestor and no git
   ancestor" arrives with the `kata init --project` hint that fixes it — and a
@@ -479,12 +560,16 @@ kata list --status <open|closed|all> --limit 1000 --include-total --json
   `needParents`), the read's ceiling (`bigger`, `footNote`, `moreButton`,
   `loadMore`), the search (`searchText`, `hitOf`, `snippet`, `searching`,
   `queryQ`, `matches`, `missLine`, `toggleSearch`, `clearSearch`, `searchBar`,
-  `hitRow`, `results`, `statusEscape`), the trail between issues (`open`,
+  `hitRow`, `results`, `statusEscape`), the events (`normalizeEvent`,
+  `readEvents`, `eventsAfter`, `lastEventId`, `lead`, `b64`, `eventSay`,
+  `linksTail`, `metadataSay`, `metadataTail`, `toggleEvents`, `goTree`,
+  `pollEvents`, `mergeEvents`, `loadEarlier`, `openEventIssue`, `dayKey`,
+  `dayLabel`, `eventsView`, `eventRow`, `earlierButton`), the trail between issues (`open`,
   `back`, `dismiss`, `cameFrom`, `nav`), and the drawing (`head`, `setStatus`,
   `filters`, `chooser`, `tree`, `row`, `detail`, `render`).
 - `mods/kata/icon.svg` — the tab bar's glyph, a list with two checks;
   `chevron-*.svg`, `fold.svg`, `unfold.svg`, `refresh.svg`, `branch.svg`,
-  `search.svg`, `check-circle.svg` are the panel's own icons, all 24×24 and
+  `search.svg`, `check-circle.svg`, `pulse.svg` are the panel's own icons, all 24×24 and
   one-color (`stroke="currentColor"`) so they tint with the theme.
 - `preview.png` (the drawn hero, from `assets/preview.html`) and
   `assets/panel-search.png` (the drawn search close-up, from
@@ -547,6 +632,18 @@ kata list --status <open|closed|all> --limit 1000 --include-total --json
   key: no Escape, no ⌘F.
 - **One list, no comments.** The detail view is the issue, not its thread;
   comments are `kata show`'s, and this mod does not ask.
+- **The events view is not a filtered list.** The status pills and the branch
+  filter do not apply to a stream, so the filter row goes while it is showing,
+  and the search does not search events — the magnifier is a click back to the
+  issues. A chip in the stream opens issues the tree's own read does not carry,
+  which is why the open issue is kept through `prune`: a detail view that folds
+  itself away at the next 15 s read is no detail view.
+- **`kata events` walks forward only.** There is no newest-first read and no
+  order flag in the CLI or the daemon, so the newest window is bisected for
+  (one-row probes, once per project) and the stream is polled forward from a
+  cursor afterwards. Do not "simplify" this into reading from 0: a year of
+  events with full bodies in every payload is not a panel read, it is a
+  download.
 - **It assumes the setup.** The button assumes tab-host is installed; without
   it, `place: "none"` hides the mod from the window and the pane is the only
   door. `tab.show` assumes the machine running the space has `kata` on its
@@ -613,3 +710,12 @@ one closed task, tasks on two branches):
   `kata` says "Kata cannot be read here" with kata's own message, not another
   machine's issues; a read that fails with rows on screen is an error line
   above them, not an empty panel.
+- **The events.** The pulse opens the stream newest first under day headers;
+  a comment row carries its first line, a close its message, and `kata notify`
+  reads as `asked <who> to look` with the request's message under it. A chip
+  for an issue the read does not carry fetches it and opens it; `‹` from that
+  detail returns to the events (the tooltip says so), and `All issues` goes to
+  the tree and closes the events view. The 15 s timer tops the stream up while
+  it shows and costs nothing while it does not; `Load earlier` walks back and
+  goes away at the beginning; switching spaces forgets the stream, and a space
+  left in the events comes back to them.

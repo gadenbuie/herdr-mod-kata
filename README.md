@@ -41,7 +41,7 @@ manifest is the whole contract.
 | `title` | The name Herdr lists the mod under. |
 | `tab.title` | The button's label. |
 | `tab.icon` | The button's glyph; `*.svg` draws tinted with the text color. |
-| `tab.state` | The `shared()` key (`kata.state`) the panel keeps what the space was left showing in: the status and branch filters, the open issue and the trail behind it, the folded rows. tab-host holds one value of it per space, so switching spaces hands the arriving one its own back — the Kata tab picks up where that space left off, and a space never visited starts fresh. Written only from the panel's own doings (clicks, picks); the search field and the open branch chooser are this minute's doings and stay out of it. |
+| `tab.state` | The `shared()` key (`kata.state`) the panel keeps what the space was left showing in: the status and branch filters, the open issue and the trail behind it, the folded rows, and whether the events view was showing. tab-host holds one value of it per space, so switching spaces hands the arriving one its own back — the Kata tab picks up where that space left off, and a space never visited starts fresh. Written only from the panel's own doings (clicks, picks); the search field and the open branch chooser are this minute's doings and stay out of it. |
 | `tab.show` | A shell string, run as `sh -c` in the shown space's folder on that space's machine; exit 0 draws the button. Only spaces whose machine has `kata` get a Kata tab, rather than one that could only say so. |
 
 ## What it shows
@@ -62,6 +62,17 @@ manifest is the whole contract.
   no second read. Hits in ids and titles sit above hits in bodies, a body hit
   carries the line that matched, and a search that finds nothing says what it
   searched and offers the one click that widens it.
+- **The events**: the pulse button in the header opens the project's event
+  stream — `kata events`' own record of what has happened, newest first,
+  grouped under day headers, polled forward every 15 s while it is showing.
+  One row per event: the time, who acted, what they did, and the issue it hung
+  on as a chip that opens its detail view — one the list does not carry (a
+  closed issue under an open filter) is fetched with `kata show` first, so the
+  chip is never dead. Comments and close messages carry their first line; an
+  attention request (`kata notify`) says who was asked and why — the one
+  notification kata leaves in the stream, shown here because there is no other
+  place that shows it. `‹` out of a detail opened from the events goes back to
+  the events, not to the tree; `All issues` still goes to the tree.
 - **The detail view**: status, priority, owner, author, branch, labels, age,
   parent and children as chips, blocks/blocked-by/related, and the body as
   rendered markdown. Following chips leaves a trail; `‹` walks it back naming
@@ -160,7 +171,7 @@ the search field is the one deliberate exception.
 ## Files
 
 - `mods/kata/main.js` — one `View`: place resolution, the read, the tree, the
-  search, the trail between issues, the drawing. The copy holds nothing that
+  search, the events, the trail between issues, the drawing. The copy holds nothing that
   has to survive it: what a space was left showing lives in the shared key
   `kata.state`, which tab-host keeps per space.
 - `mods/kata/mod.json` — the manifest, quoted verbatim above.

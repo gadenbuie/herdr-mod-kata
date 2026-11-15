@@ -597,12 +597,45 @@ function b64(text) {
   }
 }
 
+// An attention request, read out of its metadata shape: a `notify.*` key
+// names the recipient (the inbox address, base64-encoded — an actor, or an
+// actor's teammate after a slash; the same encoding `b64` reads) and the
+// value is the ask — who left it, which teammate of theirs spoke, the
+// message, the comment it answers, and kata's own `kind` (`reply` when the
+// ask is the ping that rides a reply). A key with nothing under it (kata's
+// `--clear`) is no ask at all.
+function notifyOf(key, value) {
+  if (!key.startsWith("notify.") || value == null || typeof value !== "object") return null;
+  return {
+    to: b64(key.slice("notify.".length)),
+    from: String(value.from ?? ""),
+    teammate: typeof value.teammate === "string" && value.teammate ? value.teammate : null,
+    message: String(value.message ?? ""),
+    kind: typeof value.kind === "string" && value.kind ? value.kind : null,
+  };
+}
+
+// Every ask an issue's metadata carries, in key order.
+function noticesOf(meta) {
+  return Object.keys(meta ?? {})
+    .sort()
+    .map((k) => notifyOf(k, meta[k]))
+    .filter(Boolean);
+}
+
+// The ask as a sentence: who asked — actor and teammate, named the way the
+// thread names them — and who was asked.
+function notifySaid(n) {
+  const who = [n.from, n.teammate].filter(Boolean).join("/") || "someone";
+  return `${who} asked ${n.to || "someone"} to look`;
+}
+
 // What one event says, as the row reads it: the verb (with the issue's ref
 // chip between it and whatever comes after), an optional dim tail on the same
 // line, and an optional second line under it. A metadata event whose diff
 // carries a `notify.*` key is an attention request — the one notification kata
-// leaves in the stream — so it says who was asked and why, which is the whole
-// of what the request was.
+// leaves in the stream — so it says the ask as a whole sentence and marks
+// itself (`kind`), which is what the row reads to draw it notification-shaped.
 function eventSay(ev) {
   const p = ev.payload;
   switch (ev.type) {
@@ -642,21 +675,36 @@ function linksTail(p) {
   return parts.join(" · ");
 }
 
-// A metadata event: an attention request when the diff carries a `notify.*`
-// key — "asked <who> to look", the request's message under it — otherwise the
-// keys that changed, at most two named and the rest counted.
+// A metadata event: an attention request when the diff carries `notify.*`
+// keys — the ask as a sentence, the request's message under it — otherwise
+// the keys that changed, at most two named and the rest counted. A diff can
+// carry more than one ask — an ask set while another is cleared, both in one
+// write — so every notify key is read and the sentences joined; keys riding
+// along (the `work.attention` that follows an ask) keep their own tail after
+// the asks. A cleared ask (`--clear` leaves the key null) still says it
+// happened, quietly.
 function metadataSay(diff) {
   const keys = Object.keys(diff ?? {});
-  const notifyKey = keys.find((k) => k.startsWith("notify."));
-  if (notifyKey) {
-    const who = b64(notifyKey.slice("notify.".length));
-    const to = diff[notifyKey]?.to;
-    if (to && typeof to === "object") {
-      return { verb: `asked ${who || "someone"} to look`, detail: lead(to.message) };
+  const said = [];
+  let message = "";
+  for (const k of keys) {
+    if (!k.startsWith("notify.")) continue;
+    const ask = notifyOf(k, diff[k]?.to);
+    if (ask) {
+      said.push(notifySaid(ask));
+      if (!message) message = lead(ask.message);
+    } else {
+      said.push(`cleared the ask for ${b64(k.slice("notify.".length)) || "someone"}`);
     }
-    return { verb: `cleared the ask for ${who || "someone"}` };
   }
-  return { verb: "set", tail: metadataTail(diff) };
+  if (!said.length) return { verb: "set", tail: metadataTail(diff) };
+  const rest = Object.fromEntries(Object.entries(diff).filter(([k]) => !k.startsWith("notify.")));
+  return {
+    verb: said.join(" · "),
+    tail: keys.length !== said.length ? metadataTail(rest) : undefined,
+    kind: "notify",
+    detail: message,
+  };
 }
 
 // The keys a metadata or project event changed, as `key → what it became`.
@@ -674,13 +722,13 @@ function metadataTail(diff) {
   return parts.join(" · ");
 }
 
-// Metadata is a bag of keys anyone can write. The panel already draws the one it
-// understands (`work.branch`, as Branch), so the rest is what this lists: every
-// other key, in name order, its value as written — text as text, anything
-// structured as one line of JSON.
+// Metadata is a bag of keys anyone can write. The panel already draws the ones it
+// understands (`work.branch`, as Branch; `notify.*`, as the Notifications block),
+// so the rest is what this lists: every other key, in name order, its value as
+// written — text as text, anything structured as one line of JSON.
 function metaRows(meta) {
   return Object.keys(meta ?? {})
-    .filter((k) => k !== BRANCH)
+    .filter((k) => k !== BRANCH && !k.startsWith("notify."))
     .sort()
     .map((k) => {
       const v = meta[k];
@@ -949,6 +997,11 @@ export default class Kata extends View {
     this.eventsBusy = false;
     this.eventsError = null;
     this.eventsMore = true;
+    // The event ids whose second line is unfolded — the words an event
+    // carried, read in full after a click on the line that was carrying them
+    // cut short. This minute's doings, like the search: a copy keeps them
+    // while it shows, and a space that arrives carries none.
+    this.unfolded = new Set();
     this.folder = null;      // the folder the shown project was read from
     this.loading = false;
     this.ready = false;
@@ -1803,12 +1856,17 @@ export default class Kata extends View {
 
   // One event, one row: a time in the left column (the day header above it
   // carries the date), then the actor, the verb, the issue's ref chip and
-  // whatever tail the event has. Only the chip is a button — a row that opens
-  // an issue when the chip in it is the thing to click is a row with two
-  // targets, and the miss is always the one that costs.
+  // whatever tail the event has. The chip is the one button that goes
+  // somewhere — a row that opens an issue when the chip in it is the thing to
+  // click is a row with two targets, and the miss is always the one that
+  // costs. The second line is the one exception, and a safe one: it unfolds
+  // where it stands, so a missed click costs a fold, not a wrong room.
   eventRow(ev, cx) {
     const t = theme();
     const say = eventSay(ev);
+    // The one row that says a notification: `kind` is metadataSay's mark,
+    // read through an `in` guard because only that one branch carries it.
+    const notify = "kind" in say && say.kind === "notify";
     const at = new Date(ev.at);
     const time = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
     const known = ev.issueUid ? this.by(ev.issueUid) : null;
@@ -1823,7 +1881,14 @@ export default class Kata extends View {
     const line = h_flex().flex_1().min_w(0).gap(5).items_center()
       .child(div().flex_none().max_w(110).truncate().text_size(11).font_semibold().text_color(t.muted)
         .child(ev.actor ?? "kata"))
-      .child(div().flex_none().text_size(11.5).text_color(t.foreground).child(say.verb))
+      // A notification row wears a bell and the needs-human state's own
+      // purple, so an ask is findable by scanning a stream that is mostly
+      // prose; a cleared ask keeps the bell but goes quiet.
+      .when(notify, (el) => el
+        .child(svg(`${ICONS}/bell.svg`).size(11).flex_none()
+          .text_color(say.detail ? t.ansi5 : t.dim)))
+      .child(div().flex_none().text_size(11.5)
+        .text_color(notify && say.detail ? t.ansi5 : t.foreground).child(say.verb))
       .when(Boolean(chip), (el) => el.child(chip))
       .when(Boolean(say.tail), (el) => el.child(div().min_w(0).flex_1().truncate().text_size(11).text_color(t.dim)
         .child(String(say.tail))))
@@ -1832,8 +1897,30 @@ export default class Kata extends View {
       .child(h_flex().items_start().gap(8)
         .child(div().w(34).flex_none().text_size(10).text_color(t.dim).child(time))
         .child(line))
-      .when(Boolean(say.detail), (el) => el
-        .child(div().min_w(0).truncate().pl(42).text_size(10.5).text_color(t.dim).child(say.detail)));
+      // The words the event carried, cut to one line — until the line is
+      // clicked, and they unfold to their whole length where they stand. The
+      // cut is the promise, the pointer and the hover the invitation.
+      .when(Boolean(say.detail), (el) => {
+        const open = this.unfolded.has(ev.id);
+        const line = div().id(`kata-line-${ev.id}`).min_w(0).pl(42).pr(4).py(1).rounded(4)
+          .text_size(10.5).text_color(notify ? t.muted : t.dim)
+          .when(!open, (el) => el.truncate())
+          .cursor_pointer().hover((s) => s.bg(t.hover))
+          .on_click((_e, cx) => this.unfold(ev.id, cx))
+          .child(say.detail);
+        return el.child(line);
+      });
+  }
+
+  // A second line clicked: the words an event carried unfold to their whole
+  // length, and a second click folds them back. The stream's rows are one
+  // line each by design, but the words are the point of some rows — a
+  // notification's message most of all — so the fold is the row's own, not a
+  // new view, and the full text is already in hand: no read is asked for it.
+  unfold(id, cx) {
+    if (this.unfolded.has(id)) this.unfolded.delete(id);
+    else this.unfolded.add(id);
+    cx.notify();
   }
 
   // The window before the one on screen, one click away, the way the tree's
@@ -1896,6 +1983,31 @@ export default class Kata extends View {
         .child(TextView.markdown(`kata-comment-${i.uid}-${c.id || n}`, c.body || "_Empty comment._"))))
       .when(d.truncated, (el) => el.child(div().text_size(10.5).text_color(t.dim)
         .child("kata cut the thread short; `kata show` has the rest.")));
+  }
+
+  // The asks the issue carries, drawn above the Metadata block and apart from
+  // it: a `notify.*` key is not a field someone wrote, it is a message left
+  // for a person — who asked, and what they said — so it reads as one. The
+  // asker's line is in the same purple the needs-human state wears, because
+  // the ask is why the state says a person is wanted; the two should read as
+  // one thing. Metadata carries no time, so none is claimed here — the events
+  // view is where an ask's age lives.
+  notifications(i) {
+    const t = theme();
+    const notices = noticesOf(i.meta);
+    if (!notices.length) return null;
+    const rows = notices.map((n) => {
+      const row = v_flex().gap(2).p(8).rounded(6).bg(t.raised)
+        .child(h_flex().gap(6).items_center()
+          .child(svg(`${ICONS}/bell.svg`).size(11).flex_none().text_color(t.ansi5))
+          .child(div().min_w(0).flex_1().truncate().text_size(11).text_color(t.ansi5)
+            .child(notifySaid(n))));
+      if (n.message) row.child(div().min_w(0).text_size(10.5).text_color(t.foreground).child(n.message));
+      return row;
+    });
+    return v_flex().pt(6).gap(3)
+      .child(div().text_size(11).font_semibold().text_color(t.muted).child("Notifications"))
+      .children(rows);
   }
 
   // The metadata the panel has no row of its own for: the fields' own layout,
@@ -2661,6 +2773,7 @@ export default class Kata extends View {
       .when(i.blockedBy.length > 0, (el) => el.child(this.refField("Blocked by", i.blockedBy, cx)))
       .when(i.blocks.length > 0, (el) => el.child(this.refField("Blocks", i.blocks, cx)))
       .when(i.related.length > 0, (el) => el.child(this.refField("Related", i.related, cx)))
+      .children([this.notifications(i)].filter(Boolean))
       .children([this.metadata(i)].filter(Boolean));
     const body = v_flex().px(14).gap(5)
       .child(div().text_size(13.5).font_semibold().text_color(t.foreground).child(i.title))

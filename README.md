@@ -69,9 +69,19 @@ manifest is the whole contract.
   on as a chip that opens its detail view — one the list does not carry (a
   closed issue under an open filter) is fetched with `kata show` first, so the
   chip is never dead. Comments and close messages carry their first line; an
-  attention request (`kata notify`) says who was asked and why — the one
-  notification kata leaves in the stream, shown here because there is no other
-  place that shows it. `‹` out of a detail opened from the events goes back to
+  attention request (`kata notify`) reads as a whole sentence —
+  `hajime/h190 asked garrick to look` — with the request's message under it,
+  drawn notification-shaped: a bell before the words and the ask in the same
+  purple the needs-human state wears, because a row that asks for a person
+  should be findable by scanning. A row's second line is a click to unfold:
+  the words an event carried — a notification's message, a comment's first
+  line, a close's message — are cut to one line until the line is clicked,
+  then wrap to their whole length where they stand, and a second click folds
+  them back; the full text is already in hand, so the unfold asks for
+  nothing. The chip opens the issue, whose detail view
+draws the ask in full. This is the one notification kata leaves in the
+  stream, shown here because there is no other place that shows it. `‹` out of
+  a detail opened from the events goes back to
   the events, not to the tree; `All issues` still goes to the tree.
 - **The detail view**: status, priority, owner, author, branch, labels, age,
   parent and children as chips, blocks/blocked-by/related, and the body as
@@ -89,10 +99,18 @@ manifest is the whole contract.
   the graph's cards and in the detail pill. Gray is quiet on purpose: most work
   is not ready, and ready and in-flight are what to find.
 - **Metadata and comments** in the detail view: every metadata key but
-  `work.branch` (which is the Branch row) as a field row at the bottom of the
-  info block, after a `Metadata` heading, plus the issue's comments, oldest
-  first, with author, age and rendered markdown. The thread comes from
-  `kata show` when an issue opens and again on each refresh.
+  `work.branch` (which is the Branch row) and `notify.*` (which is the next
+  block) as a field row at the bottom of the info block, after a `Metadata`
+  heading, plus the issue's comments, oldest first, with author, age and
+  rendered markdown. The thread comes from `kata show` when an issue opens and
+  again on each refresh.
+- **Notifications** in the detail view: the asks a `kata notify` leaves in the
+  issue's metadata are drawn above the Metadata block as their own rows — a
+  bell, who asked (actor and teammate, as the thread names them), and the
+  message, on the raised card the comments wear, the asker's line in the
+  needs-human purple. The ask is why the state says a person is wanted, so the
+  two read as one thing; a cleared ask is gone, and an ask's age is the
+  events view's to tell, because metadata carries no time.
 - **The graph**: the graph button in the detail header opens a window over the
   app with that issue's neighbourhood — parent, blocks and related links, one
   to three hops out (`Hide done` drops closed issues) — laid out in columns,

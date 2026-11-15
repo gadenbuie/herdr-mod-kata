@@ -213,9 +213,25 @@ filtered list, and status pills over it would be furniture.
 - **Words the event carried get their second line.** A comment's first line, a
   close's message, and — the reason the stream exists — an **attention
   request**: kata leaves a notification in the stream as a `notify.*` metadata
-  change, and the row reads it as `asked <who> to look` with the request's
-  message under it. There is no other place in the panel that shows one; this
-  is it, without a notifications feature around it.
+  change, and the row reads the ask as a whole sentence —
+  `hajime/h190 asked garrick to look` — with the request's message under it.
+  A notification row is drawn notification-shaped: a small bell before the
+  words, the ask in the same purple the needs-human state wears, and the
+  message a shade brighter than a comment's line — a row that asks for a
+  person should be findable by scanning. Clearing (`kata notify --clear`)
+  reads `cleared the ask for garrick`, dim, bell still on — and a diff that
+  carries two asks at once (one set while another is cleared, which is what a
+  reply leaves behind) reads both, joined. A second line is also a **click to
+  unfold**: rows are one line each by design, but the words are the point of
+  some rows, so the line carries a pointer and a hover, and a click wraps it
+  to its whole length where it stands — a second click folds it back. The
+  unfold is the row's own, not a new view, and the full text is already in
+  hand: no read is asked for it. It is also the one safe exception to the
+  chip-only rule: a missed click costs a fold, not a wrong room. The chip
+  opens the
+  issue, and the issue's detail view draws the ask in full. There is no other
+  place in the panel that shows one; this is it, without a notifications
+  feature around it.
 - **The first look finds where the events end.** kata walks its stream
   forward from a cursor only (`kata events --after N`), so the newest window
   is found by bisecting for the end — a dozen or so one-row reads, run once
@@ -317,7 +333,21 @@ Under the nav row, the issue itself:
   show`, the same fetch that fills in parents, so the names land a moment
   later. One the panel cannot name is a bare ref, in `dim` when the issue is
   closed, because the panel only knows what one list told it.
-- Every metadata key but `work.branch` (which is the Branch row) as its own
+- The asks (`notify.*` keys, which is how `kata notify` stores an attention
+  request: the recipient base64-encoded into the key — an actor, or an
+  actor's teammate after a slash (`hajime/h190`) — and the ask in the value:
+  who left it, which teammate spoke, the message, the comment it answers, and
+  kata's own `kind`, `reply` when the ask is the ping that rides a reply)
+  are drawn **before** that block, as their own **Notifications** rows: a bell
+  and who asked on one line in the needs-human purple, the message under it,
+  on a `raised` card like the comments wear. An issue can carry several — one
+  per recipient. A `notify.*` key is not a field
+  someone wrote, it is a message left for a person, so it does not sit in the
+  metadata rows' JSON; a cleared ask (the key left null) is no ask and shows
+  nowhere. Metadata carries no time, so an ask's age is not claimed here —
+  the events view keeps the times.
+- Every metadata key but `work.branch` (which is the Branch row) and
+  `notify.*` (which is the block above) as its own
   field row at the bottom of the block, after a `Metadata` heading —
   semibold, with a little air above it. The heading and that space are the
   whole signal that what follows is beyond what kata provides, written by
@@ -564,12 +594,15 @@ kata list --status <open|closed|all> --limit 1000 --include-total --json
   `readEvents`, `eventsAfter`, `lastEventId`, `lead`, `b64`, `eventSay`,
   `linksTail`, `metadataSay`, `metadataTail`, `toggleEvents`, `goTree`,
   `pollEvents`, `mergeEvents`, `loadEarlier`, `openEventIssue`, `dayKey`,
-  `dayLabel`, `eventsView`, `eventRow`, `earlierButton`), the trail between issues (`open`,
+  `dayLabel`, `eventsView`, `eventRow`, `earlierButton`, and the second
+  line's `unfold`), the asks a
+  `kata notify` leaves (`notifyOf`, `noticesOf`, `notifySaid`, and the
+  detail view's `notifications` block), the trail between issues (`open`,
   `back`, `dismiss`, `cameFrom`, `nav`), and the drawing (`head`, `setStatus`,
   `filters`, `chooser`, `tree`, `row`, `detail`, `render`).
 - `mods/kata/icon.svg` — the tab bar's glyph, a list with two checks;
   `chevron-*.svg`, `fold.svg`, `unfold.svg`, `refresh.svg`, `branch.svg`,
-  `search.svg`, `check-circle.svg`, `pulse.svg` are the panel's own icons, all 24×24 and
+  `search.svg`, `check-circle.svg`, `pulse.svg`, `bell.svg` are the panel's own icons, all 24×24 and
   one-color (`stroke="currentColor"`) so they tint with the theme.
 - `preview.png` (the drawn hero, from `assets/preview.html`) and
   `assets/panel-search.png` (the drawn search close-up, from
@@ -690,7 +723,10 @@ one closed task, tasks on two branches):
   click until the line is gone and every row is drawn. With no read capped
   there is no line at all, on any branch filter.
 - **The detail view.** Opening an issue shows its ref, status chip, priority,
-  author, labels, age, children, and its description as rendered markdown.
+  author, labels, age, children, and its description as rendered markdown. An
+  issue an agent has asked about (`kata notify`) shows a **Notifications** row
+  above the Metadata block — who asked, and the message, in the needs-human
+  purple — and the ask is not among the metadata rows' JSON.
   Following a ref chip to another issue swaps the nav row's `‹ All issues` for
   `‹ #ref title` and adds `All issues` at the right; `‹` walks back one issue
   at a time, naming each, and `All issues` reaches the tree in one click from
@@ -712,10 +748,14 @@ one closed task, tasks on two branches):
   above them, not an empty panel.
 - **The events.** The pulse opens the stream newest first under day headers;
   a comment row carries its first line, a close its message, and `kata notify`
-  reads as `asked <who> to look` with the request's message under it. A chip
-  for an issue the read does not carry fetches it and opens it; `‹` from that
-  detail returns to the events (the tooltip says so), and `All issues` goes to
-  the tree and closes the events view. The 15 s timer tops the stream up while
+  reads as `hajime/h190 asked garrick to look` with the request's message
+  under it, bell and purple — and a cleared ask reads `cleared the ask for
+  garrick`, dim. A cut second line unfolds on a click and folds on a second
+  one, the full message read in place. A chip
+  for an issue the read does not carry fetches it and opens it — and that
+  detail view draws the ask in its own Notifications block — `‹` from it
+  returns to the events (the tooltip says so), and `All issues` goes to the
+  tree and closes the events view. The 15 s timer tops the stream up while
   it shows and costs nothing while it does not; `Load earlier` walks back and
   goes away at the beginning; switching spaces forgets the stream, and a space
   left in the events comes back to them.

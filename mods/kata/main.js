@@ -2328,10 +2328,10 @@ export default class Kata extends View {
           .text_size(10.5).max_w(170).truncate().tooltip(guessed ? `No kata binding here: the git repo's name, ${name}` : "The bound kata project")
           .child(name)))
       .child(div().flex_1())
-      .when(this.ready && !this.missing, (el) => el
-        .child(this.iconButton("kata-events", "pulse",
-          this.eventsOpen ? "Back to the issues" : "Events: what has happened in this project",
-          (_e, cx) => this.toggleEvents(cx), false, this.eventsOpen)))
+
+      // The conditional controls: each belongs to a view, so each comes and
+      // goes with it (the list's search and folding, the graph behind an open
+      // issue).
       .when(this.ready && !this.missing && !this.nothingToShow(), (el) => el
         .child(this.iconButton("kata-graph", "graph",
           this.selected ? "Show this issue's graph: what it hangs from, blocks and relates to"
@@ -2345,6 +2345,14 @@ export default class Kata extends View {
         .child(this.iconButton("kata-fold", "unfold", "Expand all", (_e, cx) => this.toggleAll(cx))))
       .when(foldable && this.collapsed.size === 0, (el) => el
         .child(this.iconButton("kata-fold", "fold", "Collapse all", (_e, cx) => this.toggleAll(cx))))
+
+      // The stable controls: always drawn, in the same place, so a toggle
+      // under the cursor never slides them out from under it. The events
+      // toggle sits beside refresh, not with the conditionals.
+      .when(this.ready && !this.missing, (el) => el
+        .child(this.iconButton("kata-events", "pulse",
+          this.eventsOpen ? "Back to the issues" : "Events: what has happened in this project",
+          (_e, cx) => this.toggleEvents(cx), false, this.eventsOpen)))
       .child(this.iconButton("kata-refresh", "refresh", "Read the list again",
         (_e, cx) => { this.refresh(cx, true); this.save(); }, this.loading));
   }

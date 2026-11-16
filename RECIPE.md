@@ -42,11 +42,19 @@ Kata  [field-guide]                       🔍 ⤢ ↻
   `No kata binding here: the git repo's name, <name>`.
 - Icon buttons at the right, 24 px each with a 14 px glyph in `muted`,
   `foreground` on `hover`, each with a tooltip — but only the ones with work
-  to do:
+  to do, and drawn so that no button ever moves. A button's place is set by
+  the buttons to its right, so they are drawn by how long each lives —
+  ↻ and pulse the longest, fold the shortest — and a button's coming or
+  going (an issue opened, a query typed, the events view toggled) slides
+  nothing that is still on screen. From the right edge:
   - **↻**, always drawn, which turns while a read is in flight (`.spin(900)`,
     drawn by GPUI, no timer of ours).
   - **pulse** (a heartbeat line) once a read has answered — the events view
-    (below), filled `selected` while it is showing.
+    (below), filled `selected` while it is showing. It sits beside ↻, in the
+    group no toggle ever moves.
+  - **graph** (an expanding arrow) whenever kata has anything to show — over
+    the list, behind an open issue, over the events view — opening the graph
+    of the open issue, or of every linked issue in the project.
   - **search** (a magnifier; filled `selected` while its field is open) only
     while there is a list on screen — behind an open issue, over a note,
     over an empty tree, or while the first read is still in flight there is
@@ -55,7 +63,8 @@ Kata  [field-guide]                       🔍 ⤢ ↻
   - **fold/unfold all** (one button for both) only while the tree has
     something foldable: with anything folded it unfolds; with everything open
     it folds every parent. It goes while a search has flattened the tree into
-    results.
+    results. It is the one button whose place is not permanent — it sits at
+    the far left, so its leaving leaves a gap and moves nothing.
 
 **Filter row**, 34 px, a 1 px bottom border:
 
@@ -183,8 +192,8 @@ thing.
 
 ### The events
 
-The **pulse button** in the header (drawn once a read has answered, next to
-the magnifier) swaps the tree for the project's **event stream** — what `kata
+The **pulse button** in the header (drawn once a read has answered, beside
+↻) swaps the tree for the project's **event stream** — what `kata
 events` records, newest first, in place of the tree the way the branch list
 and the search take the panel. The filter row goes with it: a stream is not a
 filtered list, and status pills over it would be furniture.

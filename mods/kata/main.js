@@ -2329,22 +2329,25 @@ export default class Kata extends View {
           .child(name)))
       .child(div().flex_1())
 
-      // The conditional controls: each belongs to a view, so each comes and
-      // goes with it (the list's search and folding, the graph behind an open
-      // issue).
+      // The conditional controls, drawn by how long each lives: wherever the
+      // fold button shows, search shows; wherever search shows, the graph
+      // shows; wherever the graph shows, events shows. A button's place is
+      // set by the buttons to its right, so the shortest-lived sits farthest
+      // left and a button's coming or going — an issue opened, a query typed,
+      // the events view toggled — slides nothing that is still on screen.
+      .when(foldable && this.collapsed.size > 0, (el) => el
+        .child(this.iconButton("kata-fold", "unfold", "Expand all", (_e, cx) => this.toggleAll(cx))))
+      .when(foldable && this.collapsed.size === 0, (el) => el
+        .child(this.iconButton("kata-fold", "fold", "Collapse all", (_e, cx) => this.toggleAll(cx))))
+      .when(list, (el) => el
+        .child(this.iconButton("kata-search", "search",
+          this.searchOpen ? "Close the search" : "Search the ids, titles and bodies in this list",
+          (_e, cx) => this.toggleSearch(cx), false, this.searchOpen)))
       .when(this.ready && !this.missing && !this.nothingToShow(), (el) => el
         .child(this.iconButton("kata-graph", "graph",
           this.selected ? "Show this issue's graph: what it hangs from, blocks and relates to"
             : "Show the graph of every linked issue in this project",
           () => this.openGraph(this.selected))))
-      .when(list, (el) => el
-        .child(this.iconButton("kata-search", "search",
-          this.searchOpen ? "Close the search" : "Search the ids, titles and bodies in this list",
-          (_e, cx) => this.toggleSearch(cx), false, this.searchOpen)))
-      .when(foldable && this.collapsed.size > 0, (el) => el
-        .child(this.iconButton("kata-fold", "unfold", "Expand all", (_e, cx) => this.toggleAll(cx))))
-      .when(foldable && this.collapsed.size === 0, (el) => el
-        .child(this.iconButton("kata-fold", "fold", "Collapse all", (_e, cx) => this.toggleAll(cx))))
 
       // The stable controls: always drawn, in the same place, so a toggle
       // under the cursor never slides them out from under it. The events

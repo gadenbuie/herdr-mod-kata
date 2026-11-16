@@ -75,9 +75,9 @@ Kata  [field-guide]                       🔍 ⤢ ↻
 - On the right, the **branch filter**: a 22 px rounded-6 button with a branch
   glyph, the branch it means, and a chevron. "All branches" — and "No branch" —
   is drawn `dim` when it means every branch; a branch's own name is `muted`.
-  It is filled `selected` while its list is open. Clicking it opens the branch
-  list; it does not float, it replaces the tree — a panel with one scroll area
-  stays one scroll area.
+  It is filled `selected` while its menu is open. Clicking it opens a
+  **dropdown** anchored to the button — the same popover the events filters
+  open, and the tree stays where it is under the menu.
 
 ### The branch filter, and the default it starts on
 
@@ -122,14 +122,18 @@ It opens on the checkout's own answer, not on "everything":
 The file is this machine's and is re-read on every refresh, so an edit lands
 within 15 seconds with no button to press.
 
-**The branch list** (while it is open): 26 px rows, 6 px side margins, 10 px
-padding, rounded 6, `hover` fill, the name at 12 px `muted` and its task count
-at 10.5 px `dim` on the right. "All branches" first (with the whole read's
+**The branch menu** (while it is open): the same dropdown card the events
+filters open — `background`, a 1 px `border`, rounded 8, a shadow, 220 px
+wide for the branch names, at most eight rows before it scrolls — with the
+same 26 px rows both share: `hover` fill, the name at 12 px `muted` (the
+picked one `foreground` on `selected`) and its task count at 10.5 px `dim` on
+the right. "All branches" first (with the whole read's
 count), then every branch the current status has, most tasks first, then "No
-branch" for the tasks whose metadata has none. Picking one closes the list.
-Branches come from each issue's `work.branch` metadata — the key kata's own
-examples use — and hand-quoted values (`"feat/x"`) count as the same branch as
-the unquoted ones.
+branch" for the tasks whose metadata has none. Picking one closes the menu.
+The popover owns the press, the click-away and Escape. Branches come from
+each issue's `work.branch` metadata — the key kata's own examples use — and
+hand-quoted values (`"feat/x"`) count as the same branch as the unquoted
+ones.
 
 ### The search
 
@@ -194,8 +198,8 @@ thing.
 
 The **pulse button** in the header (drawn once a read has answered, beside
 ↻) swaps the tree for the project's **event stream** — what `kata
-events` records, newest first, in place of the tree the way the branch list
-and the search take the panel.
+events` records, newest first, in place of the tree, as the search takes the
+panel and the branch filter's menu floats over it.
 
 The **filter row** is the stream's own, and it is not the list's: status pills
 over a stream would be furniture (a status is the tree's question), but a

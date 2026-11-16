@@ -2034,18 +2034,7 @@ export default class Kata extends View {
   // list while the menu stands open: the popover's content is part of this
   // render, described beside its trigger.
   eventsMenu(cx, which) {
-    const t = theme();
     const total = this.events.length;
-    const row = (id, label, count, active, pick) => h_flex().id(id).h(26).flex_none().mx(4).px(8).gap(8)
-      .rounded(6).items_center().cursor_pointer()
-      .when(active, (el) => el.bg(t.selected))
-      .hover((s) => s.bg(t.hover))
-      .on_click((_e, cx) => { pick(); this.eventsPick = null; cx.notify(); })
-      .child(div().flex_1().min_w(0).truncate().text_size(12)
-        .text_color(active ? t.foreground : t.muted).child(label))
-      .child(div().flex_none().text_size(10.5).text_color(t.dim).child(String(count)));
-    const menu = (id) => v_flex().id(id).w(190).max_h(236).overflow_y_scrollbar().py(4)
-      .bg(t.background).border_1().border_color(t.border).rounded(8);
     if (which === "author") {
       const by = new Map();
       for (const ev of this.events) {
@@ -2053,24 +2042,33 @@ export default class Kata extends View {
         by.set(who, (by.get(who) ?? 0) + 1);
       }
       const actors = [...by.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
-      return menu("kata-events-authors")
-        .child(row("kata-ev-author-all", "Everyone", total, this.eventsAuthor == null,
-          () => { this.eventsAuthor = null; }))
+      return this.menuShell("kata-events-authors")
+        .child(this.menuRow("kata-ev-author-all", "Everyone", total, this.eventsAuthor == null,
+          () => { this.eventsAuthor = null; this.eventsPick = null; }))
         .children(actors.map(([who, n], i) =>
-          row(`kata-ev-author-${i}`, who, n, this.eventsAuthor === who,
-            () => { this.eventsAuthor = who; })));
+          this.menuRow(`kata-ev-author-${i}`, who, n, this.eventsAuthor === who,
+            () => { this.eventsAuthor = who; this.eventsPick = null; })));
     }
     const by = new Map();
     for (const ev of this.events) {
       const kind = eventKind(ev);
       by.set(kind, (by.get(kind) ?? 0) + 1);
     }
-    return menu("kata-events-kinds")
-      .child(row("kata-ev-kind-all", "All events", total, this.eventsKind == null,
-        () => { this.eventsKind = null; }))
+    return this.menuShell("kata-events-kinds")
+      .child(this.menuRow("kata-ev-kind-all", "All events", total, this.eventsKind == null,
+        () => { this.eventsKind = null; this.eventsPick = null; }))
       .children(EVENT_KINDS.filter(([kind]) => by.has(kind)).map(([kind, label], i) =>
-        row(`kata-ev-kind-${i}`, label, by.get(kind), this.eventsKind === kind,
-          () => { this.eventsKind = kind; })));
+        this.menuRow(`kata-ev-kind-${i}`, label, by.get(kind), this.eventsKind === kind,
+          () => { this.eventsKind = kind; this.eventsPick = null; })));
+  }
+
+  // The card a filter's dropdown menu is drawn on: `background`, a 1 px
+  // border, rounded 8, 190 px wide, at most eight rows before it scrolls.
+  // The branch menu is one of these too, 220 px wide for the branch names.
+  menuShell(id, width = 190) {
+    const t = theme();
+    return v_flex().id(id).w(width).max_h(236).overflow_y_scrollbar().py(4)
+      .bg(t.background).border_1().border_color(t.border).rounded(8);
   }
 
   // One event, one row: a time in the left column (the day header above it
@@ -2621,22 +2619,29 @@ export default class Kata extends View {
       .border_b(1).border_color(t.border)
       .children(STATUSES.map(segment))
       .child(div().flex_1())
-      .child(h_flex().id("kata-branch").h(22).flex_none().pl(7).pr(6).gap(5).rounded(6).max_w(190)
-        .items_center().cursor_pointer()
-        .when(this.branchOpen, (el) => el.bg(t.selected))
-        .when(!this.branchOpen, (el) => el.hover((s) => s.bg(t.hover)))
-        .tooltip(tip)
-        .on_click((_e, cx) => { this.branchOpen = !this.branchOpen; cx.notify(); })
-        .child(svg(`${ICONS}/branch.svg`).size(11).flex_none().text_color(t.dim))
-        .child(div().flex_1().min_w(0).truncate().text_size(11)
-          .text_color(chosen === undefined ? t.dim : t.muted).child(label))
-        .child(svg(`${ICONS}/chevron-down.svg`).size(10).flex_none().text_color(t.dim)));
+      .child(Popover.new("kata-branch")
+        .trigger(h_flex().h(22).flex_none().pl(7).pr(6).gap(5).rounded(6).max_w(190)
+          .items_center().cursor_pointer()
+          .when(this.branchOpen, (el) => el.bg(t.selected))
+          .when(!this.branchOpen, (el) => el.hover((s) => s.bg(t.hover)))
+          .tooltip(tip)
+          .child(svg(`${ICONS}/branch.svg`).size(11).flex_none().text_color(t.dim))
+          .child(div().flex_1().min_w(0).truncate().text_size(11)
+            .text_color(chosen === undefined ? t.dim : t.muted).child(label))
+          .child(svg(`${ICONS}/chevron-down.svg`).size(10).flex_none().text_color(t.dim)))
+        .open(this.branchOpen)
+        .on_open_change((open, cx) => { this.branchOpen = open; cx.notify(); })
+        .anchor("top_right")
+        .when(this.branchOpen, (el) => el.content(this.branchMenu(cx))));
   }
 
   // The branch filter, open: every branch the current status carries, with how
-  // many tasks are on it. It stands in place of the tree rather than floating
-  // over it — the panel is a tab, and nothing here needs a popup.
-  chooser(cx) {
+  // many tasks are on it. A dropdown anchored to its button, the way the
+  // events filters open — the tree stays where it is under the menu, and the
+  // popover owns the press, the click-away and Escape. A pick keeps the
+  // branch and closes the menu; the panel registers no key handlers of its
+  // own, so the popover is the whole of the Escape here too.
+  branchMenu(cx) {
     const t = theme();
     const pick = (value, cx) => {
       // Kept for this checkout only: another branch's checkout is another answer.
@@ -2646,22 +2651,33 @@ export default class Kata extends View {
       cx.notify();
       this.needParents(cx);
     };
-    const row = (id, value, label, count, active) => h_flex().id(id).h(26).flex_none().mx(6).px(10).gap(8)
-      .rounded(6).items_center().cursor_pointer()
-      .when(active, (el) => el.bg(t.selected))
-      .hover((s) => s.bg(t.hover))
-      .on_click((_e, cx) => pick(value, cx))
-      .child(div().flex_1().min_w(0).truncate().text_size(12)
-        .text_color(active ? t.foreground : t.muted).child(label))
-      .child(div().flex_none().text_size(10.5).text_color(t.dim).child(String(count)));
     const branches = this.branches();
     const loose = this.loose();
     const chosen = this.chosen();
-    return v_flex().id("kata-branches").flex_1().min_h(0).overflow_y_scrollbar().py(4)
-      .child(row("kata-b-all", undefined, "All branches", this.issues.length, chosen === undefined))
+    return v_flex().id("kata-branches").w(220).max_h(236).overflow_y_scrollbar().py(4)
+      .bg(t.background).border_1().border_color(t.border).rounded(8)
+      .child(this.menuRow("kata-b-all", "All branches", this.issues.length, chosen === undefined,
+        (cx) => pick(undefined, cx)))
       .children(branches.map(([name, count], i) =>
-        row(`kata-b-${i}`, name, name, count, chosen === name)))
-      .when(loose > 0, (el) => el.child(row("kata-b-none", null, "No branch", loose, chosen === null)));
+        this.menuRow(`kata-b-${i}`, name, count, chosen === name, (cx) => pick(name, cx))))
+      .when(loose > 0, (el) => el.child(this.menuRow("kata-b-none", "No branch", loose, chosen === null,
+        (cx) => pick(null, cx))));
+  }
+
+  // One counted row of a filter's dropdown menu: the label in `muted`, the
+  // picked one in `foreground` on `selected`, the count in `dim` at the right.
+  // The row the branch menu and the events menus share, so the two filters'
+  // menus cannot drift apart.
+  menuRow(id, label, count, active, pick) {
+    const t = theme();
+    return h_flex().id(id).h(26).flex_none().mx(4).px(8).gap(8)
+      .rounded(6).items_center().cursor_pointer()
+      .when(active, (el) => el.bg(t.selected))
+      .hover((s) => s.bg(t.hover))
+      .on_click((_e, cx) => pick(cx))
+      .child(div().flex_1().min_w(0).truncate().text_size(12)
+        .text_color(active ? t.foreground : t.muted).child(label))
+      .child(div().flex_none().text_size(10.5).text_color(t.dim).child(String(count)));
   }
 
   // The field, under the filters: a magnifier that answers to the keyboard, the
@@ -3066,8 +3082,6 @@ export default class Kata extends View {
           .child(div().px(14).pt(6).text_size(11).text_color(t.blocked).truncate()
             .tooltip(this.failure.message).child(this.failure.message)))
         .when(!this.ready, (el) => el.child(this.note("Reading kata…", `Asking for ${this.status} issues.`, null)))
-        .when(this.ready, (el) => el.child(this.branchOpen
-          ? this.chooser(cx)
-          : this.searching() ? this.results(cx) : this.tree(cx))));
+        .when(this.ready, (el) => el.child(this.searching() ? this.results(cx) : this.tree(cx))));
   }
 }

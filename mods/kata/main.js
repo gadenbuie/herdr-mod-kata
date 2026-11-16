@@ -2015,7 +2015,7 @@ export default class Kata extends View {
         else if (this.eventsPick === key) this.eventsPick = null;
         cx.notify();
       })
-      .anchor("bottom_right")
+      .anchor("top_right")
       .when(this.eventsPick === key, (el) => el.content(this.eventsMenu(cx, key)));
     return h_flex().id("kata-events-filters").h(34).flex_none().px(14).gap(8).items_center()
       .border_b(1).border_color(t.border)

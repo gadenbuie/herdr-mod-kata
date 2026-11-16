@@ -195,8 +195,28 @@ thing.
 The **pulse button** in the header (drawn once a read has answered, beside
 ↻) swaps the tree for the project's **event stream** — what `kata
 events` records, newest first, in place of the tree the way the branch list
-and the search take the panel. The filter row goes with it: a stream is not a
-filtered list, and status pills over it would be furniture.
+and the search take the panel.
+
+The **filter row** is the stream's own, and it is not the list's: status pills
+over a stream would be furniture (a status is the tree's question), but a
+stream long enough to page is long enough to want narrowed, and the two
+questions a stream is asked are **who acted** and **what kind of thing
+happened**. The count sits at the left (`128 events · newest first`, `7 of
+128 events` under a filter), the two pickers at the right: **Everyone ▾** and
+**All events ▾**, `dim` while they mean everything, `muted` under a pick,
+filled `selected` while their chooser is open. A pick opens a chooser in the
+stream's place, the way the branch list stands in for the tree: **Everyone**
+first with the whole count, then each actor by how many events they own;
+**All events** first, then **Asks**, **Comments**, **Changes**, **Created** —
+the kinds the rows already speak in, never kata's raw event names (a type the
+panel does not know narrows as a change, the way it reads as an odd verb).
+The filters work on what is held: polls and Load earlier keep arriving and
+leave again through the same filter, and no read is asked for a filter's sake
+— kata's CLI has no filter to ask for. A filter with nothing to show says so
+— `No asks by hajime` — and where the rest would come from (`None of the 128
+events held match — Load earlier walks further back.`). The filters are the
+view's, not the space's: closing the stream drops them; wandering into an
+issue and back keeps them; another project's stream is unfiltered.
 
 - **One row per event**: the time in a left column (the day header above it
   carries the date — `Today`, `Yesterday`, else the date, with the year when
@@ -245,10 +265,17 @@ filtered list, and status pills over it would be furniture.
   forward from a cursor only (`kata events --after N`), so the newest window
   is found by bisecting for the end — a dozen or so one-row reads, run once
   per project, under a `Reading events…` note — and read back from there.
-  Every look after that is one poll from the last id seen, on the same 15 s
-  timer as the list, and fresh events join what is on screen rather than
-  replacing it. `reset_required` (kata saying the cursor can no longer be
-  trusted) drops the stream and lets the next tick find the end again.
+  The cursor the last look stopped at rides in the space's state (the events
+  themselves do not travel: a window is one cheap read), so a first look in
+  a fresh panel starts from that seed — one probe asks whether the stream
+  has moved at all, an unmoved stream needs no end found (one read brings
+  the window back), and a moved one searches on from the seed. A stream the
+  space arrives at already showing reads at once, not at the next
+  quarter-minute. Every look after that is one poll from the last id seen, on
+  the same 15 s timer as the list, and fresh events join what is on screen
+  rather than replacing it. `reset_required` (kata saying the cursor can no
+  longer be trusted) drops the stream and lets the next tick find the end
+  again.
 - **Load earlier**, at the bottom, asks for the window before the one on
   screen — walking the cursor backwards a window at a time, since a gap in
   the ids (other projects' events interleave) is a page that comes back empty,
@@ -674,18 +701,22 @@ kata list --status <open|closed|all> --limit 1000 --include-total --json
   key: no Escape, no ⌘F.
 - **One list, no comments.** The detail view is the issue, not its thread;
   comments are `kata show`'s, and this mod does not ask.
-- **The events view is not a filtered list.** The status pills and the branch
-  filter do not apply to a stream, so the filter row goes while it is showing,
-  and the search does not search events — the magnifier is a click back to the
-  issues. A chip in the stream opens issues the tree's own read does not carry,
-  which is why the open issue is kept through `prune`: a detail view that folds
-  itself away at the next 15 s read is no detail view.
+- **The events view has its own filters, not the list's.** The status pills
+  and the branch filter do not apply to a stream, so the list's filter row
+  goes while it is showing, and the search does not search events — the
+  magnifier is a click back to the issues. The stream narrows by who acted
+  and what kind of thing happened, over what is held, never with a read. A
+  chip in the stream opens issues the tree's own read does not carry,
+  which is why the open issue is kept through `prune`: a detail view that
+  folds itself away at the next 15 s read is no detail view.
 - **`kata events` walks forward only.** There is no newest-first read and no
   order flag in the CLI or the daemon, so the newest window is bisected for
-  (one-row probes, once per project) and the stream is polled forward from a
-  cursor afterwards. Do not "simplify" this into reading from 0: a year of
-  events with full bodies in every payload is not a panel read, it is a
-  download.
+  (one-row probes, once per project — and from the seed the space's state
+  kept, when there is one, which spares most looks after the first: an
+  unmoved stream needs only a probe and a window) and the stream is polled
+  forward from a cursor afterwards. Do not "simplify" this into reading from
+  0: a year of events with full bodies in every payload is not a panel read,
+  it is a download.
 - **It assumes the setup.** The button assumes tab-host is installed; without
   it, `place: "none"` hides the mod from the window and the pane is the only
   door. `tab.show` assumes the machine running the space has `kata` on its
@@ -755,8 +786,12 @@ one closed task, tasks on two branches):
   `kata` says "Kata cannot be read here" with kata's own message, not another
   machine's issues; a read that fails with rows on screen is an error line
   above them, not an empty panel.
-- **The events.** The pulse opens the stream newest first under day headers;
-  a comment row carries its first line, a close its message, and `kata notify`
+- **The events.** The pulse opens the stream newest first under day headers,
+  over its own filter row: `Everyone ▾` and `All events ▾` narrow it by actor
+  and kind — Asks, Comments, Changes, Created — each pick opening a chooser
+  with counts in the stream's place, and a filter with no matches saying so
+  and pointing at Load earlier. A comment row carries its first line, a close
+  its message, and `kata notify`
   reads as `hajime/h190 asked garrick to look` with the request's message
   under it, bell and purple — and a cleared ask reads `cleared the ask for
   garrick`, dim. A cut second line unfolds on a click and folds on a second
@@ -766,5 +801,6 @@ one closed task, tasks on two branches):
   returns to the events (the tooltip says so), and `All issues` goes to the
   tree and closes the events view. The 15 s timer tops the stream up while
   it shows and costs nothing while it does not; `Load earlier` walks back and
-  goes away at the beginning; switching spaces forgets the stream, and a space
-  left in the events comes back to them.
+  goes away at the beginning; switching spaces forgets the stream — but keeps
+  the cursor it stopped at, so the next first look is a probe and a window —
+  and a space left in the events comes back to them, unfiltered.

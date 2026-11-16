@@ -32,7 +32,7 @@
 //   3. nothing: a space with no kata project says so, and says what to run.
 
 import { View, div, svg, PathBuilder } from "gpui-kit";
-import { v_flex, h_flex, Input, InputState, TextView } from "gpui-base";
+import { v_flex, h_flex, Input, InputState, TextView, Popover } from "gpui-base";
 import { spaces, focused, panes, exec, theme, readTextFile, appHome, shared, setShared, props, openOverlay, closeOverlay } from "herdr";
 
 const ICONS = "mods/kata";
@@ -1943,12 +1943,6 @@ export default class Kata extends View {
     const shown = this.eventsShown();
     const root = v_flex().id("kata-events-view").flex_1().min_h(0);
     root.child(this.eventsFilters(cx, shown));
-    if (this.eventsPick) {
-      // A picker open: the chooser stands in the stream's place, the way the
-      // branch list stands in for the tree — the panel is one scroll area and
-      // nothing here needs a popup.
-      return root.child(this.eventsChooser(cx));
-    }
     if (!shown.length) {
       // A filter with nothing to show says what it narrowed and where the
       // rest would come from, rather than an empty scroll.
@@ -1995,21 +1989,34 @@ export default class Kata extends View {
 
   // The stream's filter row: the count at the left, the two questions a long
   // stream is asked at the right — who acted, and what kind of thing
-  // happened. Same shape as the list's filter row, 34 px over a 1 px border;
-  // a picker that means everything is `dim`, a pick is `muted`, and an open
-  // picker is filled `selected`.
+  // happened. Same shape as the list's filter row, 34 px over a 1 px border.
+  // A picker that means everything is `dim`, a pick is `muted`, and an open
+  // picker is filled `selected`. A pick opens a dropdown anchored to its
+  // picker — the stream stays where it is under it — and the popover owns
+  // the press, the click-away and Escape, so the panel registers no key
+  // handlers of its own and neither picker's state is second-guessed: what a
+  // popover reports lands in the one state both share, and a picker closing
+  // while its neighbour opens does not close the neighbour.
   eventsFilters(cx, shown) {
     const t = theme();
     const total = this.events.length;
-    const pick = (key, label, tip, everything) => h_flex().id(`kata-evpick-${key}`).h(22).flex_none().pl(8).pr(6).gap(4).rounded(6).max_w(150)
-      .items_center().cursor_pointer()
-      .when(this.eventsPick === key, (el) => el.bg(t.selected))
-      .when(this.eventsPick !== key, (el) => el.hover((s) => s.bg(t.hover)))
-      .tooltip(tip)
-      .on_click((_e, cx) => { this.eventsPick = this.eventsPick === key ? null : key; cx.notify(); })
-      .child(div().min_w(0).truncate().text_size(11)
-        .text_color(everything ? t.dim : t.muted).child(label))
-      .child(svg(`${ICONS}/chevron-down.svg`).size(10).flex_none().text_color(t.dim));
+    const pick = (key, label, tip, everything) => Popover.new(`kata-evpick-${key}`)
+      .trigger(h_flex().h(22).flex_none().pl(8).pr(6).gap(4).rounded(6).max_w(150)
+        .items_center().cursor_pointer()
+        .when(this.eventsPick === key, (el) => el.bg(t.selected))
+        .when(this.eventsPick !== key, (el) => el.hover((s) => s.bg(t.hover)))
+        .tooltip(tip)
+        .child(div().min_w(0).truncate().text_size(11)
+          .text_color(everything ? t.dim : t.muted).child(label))
+        .child(svg(`${ICONS}/chevron-down.svg`).size(10).flex_none().text_color(t.dim)))
+      .open(this.eventsPick === key)
+      .on_open_change((open, cx) => {
+        if (open) this.eventsPick = key;
+        else if (this.eventsPick === key) this.eventsPick = null;
+        cx.notify();
+      })
+      .anchor("bottom_right")
+      .when(this.eventsPick === key, (el) => el.content(this.eventsMenu(cx, key)));
     return h_flex().id("kata-events-filters").h(34).flex_none().px(14).gap(8).items_center()
       .border_b(1).border_color(t.border)
       .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim)
@@ -2020,15 +2027,16 @@ export default class Kata extends View {
       .child(pick("kind", this.eventsKind ? KIND_LABEL.get(this.eventsKind) : "All events", "Show only one kind of event", this.eventsKind == null));
   }
 
-  // A picker, open: the actors or the kinds the held stream carries, with how
-  // many events each has — the same 26 px rows the branch list draws, "All"
-  // first with the whole count, then the rest, most events first. The counts
-  // are the held stream's own, so a pick names something real and a poll
-  // that brings new actors grows the list.
-  eventsChooser(cx) {
+  // The menu a picker opens: the actors or the kinds the held stream carries,
+  // with how many events each has — "All" first with the whole count, then
+  // the rest, most events first. The counts are the held stream's own, so a
+  // pick names something real and a poll that brings new actors grows the
+  // list while the menu stands open: the popover's content is part of this
+  // render, described beside its trigger.
+  eventsMenu(cx, which) {
     const t = theme();
     const total = this.events.length;
-    const row = (id, label, count, active, pick) => h_flex().id(id).h(26).flex_none().mx(6).px(10).gap(8)
+    const row = (id, label, count, active, pick) => h_flex().id(id).h(26).flex_none().mx(4).px(8).gap(8)
       .rounded(6).items_center().cursor_pointer()
       .when(active, (el) => el.bg(t.selected))
       .hover((s) => s.bg(t.hover))
@@ -2036,14 +2044,16 @@ export default class Kata extends View {
       .child(div().flex_1().min_w(0).truncate().text_size(12)
         .text_color(active ? t.foreground : t.muted).child(label))
       .child(div().flex_none().text_size(10.5).text_color(t.dim).child(String(count)));
-    if (this.eventsPick === "author") {
+    const menu = (id) => v_flex().id(id).w(190).max_h(236).overflow_y_scrollbar().py(4)
+      .bg(t.background).border_1().border_color(t.border).rounded(8);
+    if (which === "author") {
       const by = new Map();
       for (const ev of this.events) {
         const who = eventActor(ev);
         by.set(who, (by.get(who) ?? 0) + 1);
       }
       const actors = [...by.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
-      return v_flex().id("kata-events-authors").flex_1().min_h(0).overflow_y_scrollbar().py(4)
+      return menu("kata-events-authors")
         .child(row("kata-ev-author-all", "Everyone", total, this.eventsAuthor == null,
           () => { this.eventsAuthor = null; }))
         .children(actors.map(([who, n], i) =>
@@ -2055,7 +2065,7 @@ export default class Kata extends View {
       const kind = eventKind(ev);
       by.set(kind, (by.get(kind) ?? 0) + 1);
     }
-    return v_flex().id("kata-events-kinds").flex_1().min_h(0).overflow_y_scrollbar().py(4)
+    return menu("kata-events-kinds")
       .child(row("kata-ev-kind-all", "All events", total, this.eventsKind == null,
         () => { this.eventsKind = null; }))
       .children(EVENT_KINDS.filter(([kind]) => by.has(kind)).map(([kind, label], i) =>

@@ -204,19 +204,24 @@ questions a stream is asked are **who acted** and **what kind of thing
 happened**. The count sits at the left (`128 events · newest first`, `7 of
 128 events` under a filter), the two pickers at the right: **Everyone ▾** and
 **All events ▾**, `dim` while they mean everything, `muted` under a pick,
-filled `selected` while their chooser is open. A pick opens a chooser in the
-stream's place, the way the branch list stands in for the tree: **Everyone**
-first with the whole count, then each actor by how many events they own;
-**All events** first, then **Asks**, **Comments**, **Changes**, **Created** —
-the kinds the rows already speak in, never kata's raw event names (a type the
-panel does not know narrows as a change, the way it reads as an odd verb).
-The filters work on what is held: polls and Load earlier keep arriving and
-leave again through the same filter, and no read is asked for a filter's sake
-— kata's CLI has no filter to ask for. A filter with nothing to show says so
-— `No asks by hajime` — and where the rest would come from (`None of the 128
-events held match — Load earlier walks further back.`). The filters are the
-view's, not the space's: closing the stream drops them; wandering into an
-issue and back keeps them; another project's stream is unfiltered.
+filled `selected` while their menu is open. A pick opens a **dropdown**
+anchored to its picker, and the stream stays where it is under it:
+`background`, a 1 px `border`, rounded 8, a shadow, 190 px wide, at most
+eight rows before it scrolls — **Everyone** first with the whole count, then
+each actor by how many events they own; **All events** first, then **Asks**,
+**Comments**, **Changes**, **Created** — the kinds the rows already speak in,
+never kata's raw event names (a type the panel does not know narrows as a
+change, the way it reads as an odd verb). The popover owns the press, the
+click-away and Escape — the panel still registers no key handlers of its own
+— and its content is part of the render that describes it, so a poll that
+brings new actors grows the open menu's list. The filters work on what is
+held: polls and Load earlier keep arriving and leave again through the same
+filter, and no read is asked for a filter's sake — kata's CLI has no filter
+to ask for. A filter with nothing to show says so — `No asks by hajime` — and
+where the rest would come from (`None of the 128 events held match — Load
+earlier walks further back.`). The filters are the view's, not the space's:
+closing the stream drops them; wandering into an issue and back keeps them;
+another project's stream is unfiltered.
 
 - **One row per event**: the time in a left column (the day header above it
   carries the date — `Today`, `Yesterday`, else the date, with the year when
@@ -788,10 +793,10 @@ one closed task, tasks on two branches):
   above them, not an empty panel.
 - **The events.** The pulse opens the stream newest first under day headers,
   over its own filter row: `Everyone ▾` and `All events ▾` narrow it by actor
-  and kind — Asks, Comments, Changes, Created — each pick opening a chooser
-  with counts in the stream's place, and a filter with no matches saying so
-  and pointing at Load earlier. A comment row carries its first line, a close
-  its message, and `kata notify`
+  and kind — Asks, Comments, Changes, Created — each pick opening a dropdown
+  of counted options, the stream staying put under it, and a filter with no
+  matches saying so and pointing at Load earlier. A comment row carries its
+  first line, a close its message, and `kata notify`
   reads as `hajime/h190 asked garrick to look` with the request's message
   under it, bell and purple — and a cleared ask reads `cleared the ask for
   garrick`, dim. A cut second line unfolds on a click and folds on a second

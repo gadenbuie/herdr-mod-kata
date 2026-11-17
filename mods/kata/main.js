@@ -11,7 +11,10 @@
 // It reads `kata list --json` for the project the space is in and shows what a
 // terminal would show with `kata tui`: the open work, which task belongs under
 // which, and every field the list carries. Status and branch are filters, and a
-// search narrows the same list by id, title or body; a row opens the issue's own
+// search narrows the same list by id, title or body — instantly, in the rows the
+// read carried — while a query that reads like a sentence also asks `kata search`
+// (debounced, so a burst of keystrokes is one call), whose semantic matches draw
+// below the list's own as "found by meaning"; a row opens the issue's own
 // details, out of the same read — nothing here posts, claims, closes or
 // comments. One list per refresh, plus a `kata show` for each parent that list
 // did not carry, so a task never loses its place in the tree.
@@ -48,6 +51,18 @@ const STATUSES = [
 // at, and a read that stops there says so and offers the next ceiling — `bigger`,
 // one click away, until there is no ceiling at all.
 const LIMIT = 1000;
+
+// How long a typing pause has to last before the panel asks `kata search` for
+// the query's semantic matches — long enough that a burst of keystrokes is one
+// call, short enough that the answer lands while the person is still reading.
+// The local filter answers on every keystroke; this is the second, slower layer.
+const FAR_MS = 400;
+
+// How long a semantic ask has to run before the spinner joins the results — a
+// search that answers inside the pause shows nothing, because a spinner that
+// flashes for a blink is noise; one that lingers deserves a word saying it is
+// looking. Measured from the ask starting, not the last keystroke.
+const FAR_SLOW_MS = 600;
 
 // How many events one look at the project's history holds. `kata events` only
 // walks forward from a cursor (`--after`), so the newest window is found by
@@ -415,6 +430,8 @@ function priorityColor(t, p) {
 // The strings a search reads, lowercased once per issue and kept on it: a
 // keystroke must not lower a thousand descriptions again. An issue is as
 // long-lived as the read it arrived in, which is as long as this cache is good.
+// The semantic search's issues carry one more field, `matchedIn`, set when they
+// arrive — what kata named as the place its match came from.
 function searchText(i) {
   return (i.searchText ??= {
     ref: i.ref.toLowerCase(),
@@ -448,6 +465,15 @@ function snippet(body, q, width = 84) {
   const from = Math.max(0, at - 24);
   const cut = text.slice(from, from + width).trim();
   return `${from > 0 ? "…" : ""}${cut}${from + width < text.length ? "…" : ""}`;
+}
+
+// Whether a query reads like a sentence rather than a name: two words, or one
+// long word a substring match would treat as a phrase. Only such a query is
+// worth a round-trip — `nfe7` and `paparazzi` are names, and the local filter
+// already answers them on the keystroke.
+function farWorthy(q) {
+  const words = q.split(/\s+/).filter(Boolean);
+  return words.length >= 2 || q.length >= 14;
 }
 
 // ---- comments and metadata ----
@@ -1000,11 +1026,30 @@ export default class Kata extends View {
     this.searchOpen = false;
     this.query = "";
     this.searchTyping = false;
+    // The semantic layer behind the local one: `far` holds what `kata search`
+    // answered with (the issues normalized, with their score and the fields the
+    // match came from), `farQuery` the query it answers, `farGen` a counter that
+    // makes every older request's answer unwelcome, `farTimer` the debounce
+    // still running, `farBusy` a call in flight, `farError` what the last call
+    // said when it failed — one dim line, not a refusal per keystroke. Like the
+    // search itself, all of it belongs to the minute, not the read.
+    this.far = [];
+    this.farQuery = "";
+    this.farGen = 0;
+    this.farTimer = null;
+    this.farBusy = false;
+    this.farError = null;
+    // The spinner's side of the same story: `farSlow` only once the ask has
+    // run long enough to be worth a word about, `farSlowTimer` the delay still
+    // waiting. A fast answer never sets it, so the results never flicker.
+    this.farSlow = false;
+    this.farSlowTimer = null;
     this.searchInput = InputState.new({ placeholder: "Search ids, titles, bodies…" });
     this.searchInput.on("change", (_e, cx) => {
       const q = this.searchInput.value();
       if (q === this.query) return;
       this.query = q;
+      this.askFar(cx);
       cx.notify();
     });
     this.searchInput.on("focus", (_e, cx) => { this.searchTyping = true; cx.notify(); });
@@ -1481,13 +1526,121 @@ export default class Kata extends View {
 
   // The field closes and its query goes with it — what a moved place and a
   // second click on the button both do. The value is set only when there is one
-  // to empty, so the input's own `change` is not fired for nothing.
+  // to empty, so the input's own `change` is not fired for nothing. The pending
+  // debounce is cancelled and the generation bumped, so an answer that was on
+  // its way has nowhere to land.
   clearSearch() {
     this.searchOpen = false;
+    this.stopFar();
     if (this.query) {
       this.query = "";
       this.searchInput.set_value("");
     }
+  }
+
+  // The semantic layer, stopped: the timers cancelled, the generation bumped,
+  // the state emptied. What a cleared field, a closed search and a moved project
+  // all want, each for its own reason.
+  stopFar() {
+    if (this.farTimer) this.farTimer.cancel();
+    this.farTimer = null;
+    if (this.farSlowTimer) this.farSlowTimer.cancel();
+    this.farSlowTimer = null;
+    this.farGen++;
+    this.far = [];
+    this.farQuery = "";
+    this.farBusy = false;
+    this.farSlow = false;
+    this.farError = null;
+  }
+
+  // One keystroke's worth of change: the local filter has already answered, and
+  // this decides whether a slower answer is worth waiting for. A query that
+  // reads like a sentence schedules one `kata search` behind a pause; anything
+  // shorter keeps the search local, and any semantic state from a wider query
+  // goes — it answers a question the field no longer asks.
+  askFar(cx) {
+    if (this.farTimer) this.farTimer.cancel();
+    this.farTimer = null;
+    const gen = ++this.farGen;
+    const q = this.queryQ();
+    if (!this.searching() || !farWorthy(q)) {
+      if (this.farQuery || this.farBusy || this.farError) {
+        this.far = [];
+        this.farQuery = "";
+        this.farBusy = false;
+        this.farError = null;
+        cx.notify();
+      }
+      return;
+    }
+    if (q === this.farQuery) return;
+    this.farTimer = cx.timer.after(FAR_MS, (timerCx) => this.runFar(timerCx, gen, q));
+  }
+
+  // The debounced ask. The checks it starts with are the debounce's own work:
+  // the generation says no newer keystroke came, the query says the words are
+  // still the ones being answered. One call in flight at a time — an older one
+  // still running when a newer starts has its answer dropped, not awaited. The
+  // status filter goes with the ask, so the ceiling is spent on rows the filter
+  // would have kept, the way `kata list` carries its own `--status`.
+  runFar(cx, gen, q) {
+    this.farTimer = null;
+    if (gen !== this.farGen || q !== this.queryQ()) return;
+    const origin = this.origin;
+    if (!origin?.folder || !this.resolved || this.resolved.missing) return;
+    this.farBusy = true;
+    this.farSlow = false;
+    this.far = [];
+    this.farError = null;
+    this.farQuery = q;
+    if (this.farSlowTimer) this.farSlowTimer.cancel();
+    this.farSlowTimer = cx.timer.after(FAR_SLOW_MS, (slowCx) => {
+      this.farSlowTimer = null;
+      if (gen !== this.farGen || !this.farBusy) return;
+      this.farSlow = true;
+      slowCx.notify();
+    });
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const project = this.resolved.bound ? null : this.resolved.name;
+        const args = ["search", ...q.split(/\s+/).filter(Boolean), "--json"];
+        if (this.status !== "all") args.push("--status", this.status);
+        if (project) args.push("--project", project);
+        const r = await exec("kata", args, { cwd: origin.folder, on: origin.on });
+        if (gen !== this.farGen || q !== this.queryQ()) return;
+        this.farBusy = false;
+        this.farSlow = false;
+        if (this.farSlowTimer) this.farSlowTimer.cancel();
+        this.farSlowTimer = null;
+        if (r.code !== 0) {
+          this.far = [];
+          this.farError = refusal(r);
+        } else {
+          let data;
+          try {
+            data = JSON.parse(r.stdout);
+          } catch {
+            this.farError = "kata search said something the panel could not read";
+          }
+          this.far = (data?.results ?? []).map((res) => {
+            const i = normalize(res.issue ?? {});
+            i.matchedIn = (res.matched_in ?? []).map(String);
+            i.score = typeof res.score === "number" ? res.score : 0;
+            return i;
+          });
+        }
+      } catch {
+        if (gen !== this.farGen) return;
+        this.farBusy = false;
+        this.farSlow = false;
+        if (this.farSlowTimer) this.farSlowTimer.cancel();
+        this.farSlowTimer = null;
+        this.farError = "kata is not installed here, or it cannot start";
+      }
+      cx.notify();
+    });
   }
 
   // The field is a view of the list, not a read: opening it asks kata for
@@ -1508,19 +1661,32 @@ export default class Kata extends View {
   }
 
   // The issues the query finds, in the order the panel ranks them: the ones it
-  // names in their id or title first, then the ones whose description it is in.
-  // Both groups keep the tree's own work order — open before closed, then
-  // priority, then what moved last — because a search is still a list of work to
-  // do rather than a list of scores.
+  // names in their id or title first, then the ones whose description it is in,
+  // then what `kata search` found by meaning — a wider net than the list this
+  // read carried, drawn as its own group rather than folded in. The filters
+  // above hold for it as they hold for the tree: kata was asked with the same
+  // `--status`, and the branch filter is applied here, since meaning does not
+  // live on a branch but the work does. What the wider net adds is what the
+  // list's own two passes cannot reach: issues past the ceiling the read
+  // stopped at, and matches kata found in the comments. Both local groups keep
+  // the tree's own work order — open before closed, then priority, then what
+  // moved last — because a search is still a list of work to do rather than a
+  // list of scores; the semantic group keeps kata's ranking, which is the one
+  // order that knows why each row is there.
   matches(q) {
     const names = [];
     const bodies = [];
+    const seen = new Set();
     for (const i of this.filtered()) {
       const hit = hitOf(i, q);
-      if (hit === "name") names.push(i);
-      else if (hit === "body") bodies.push(i);
+      if (hit === "name") { names.push(i); seen.add(i.uid); }
+      else if (hit === "body") { bodies.push(i); seen.add(i.uid); }
     }
-    return { names: names.sort(order), bodies: bodies.sort(order) };
+    const branch = this.fellBack() ? undefined : this.chosen();
+    const far = this.far.filter((i) => (this.status === "all" || (this.status === "closed" ? i.closed : !i.closed))
+      && (branch === undefined || i.branch === branch)
+      && !seen.has(i.uid));
+    return { names: names.sort(order), bodies: bodies.sort(order), far };
   }
 
   // What a search that found nothing looked at, which is this very list — the
@@ -2558,7 +2724,7 @@ export default class Kata extends View {
         .child(this.iconButton("kata-fold", "fold", "Collapse all", (_e, cx) => this.toggleAll(cx))))
       .when(list, (el) => el
         .child(this.iconButton("kata-search", "search",
-          this.searchOpen ? "Close the search" : "Search the ids, titles and bodies in this list",
+          this.searchOpen ? "Close the search" : "Search the ids, titles and bodies in this list — a two-word query also searches by meaning",
           (_e, cx) => this.toggleSearch(cx), false, this.searchOpen)))
       .when(this.ready && !this.missing && !this.nothingToShow(), (el) => el
         .child(this.iconButton("kata-graph", "graph",
@@ -2587,6 +2753,10 @@ export default class Kata extends View {
     this.trail = [];
     this.selected = null;
     this.branchOpen = false;
+    // The semantic answers were asked with the old status; the new one asks
+    // its own — cleared, then scheduled again behind the same pause.
+    this.stopFar();
+    this.askFar(cx);
     this.save();
     this.read(cx);
   }
@@ -2706,6 +2876,17 @@ export default class Kata extends View {
           .child("×")));
   }
 
+  // A semantic result's row. What it carries may be an issue the read never
+  // brought — closed under an open filter, a task of another branch, one past
+  // the ceiling — so it is filed where `by` looks before the detail view opens,
+  // the way an event's chip is: the answer is already in hand, and `kata show`
+  // is asked only for the thread it adds. One the next read does not know is
+  // dropped then, the way every fetched issue is.
+  openFar(i, cx) {
+    if (!this.by(i.uid)) this.ancestors.set(i.uid, i);
+    this.open(i.uid, cx);
+  }
+
   // A row of the results: the same marker, ref, title and priority as a tree
   // row, and under a description hit the line of the description that matched —
   // without it a result that matched no visible word asks why it is here. No
@@ -2715,10 +2896,14 @@ export default class Kata extends View {
     const t = theme();
     const blocked = this.isBlocked(i);
     const st = workState(t, i, blocked);
-    const hint = hit === "body" ? snippet(i.body, this.queryQ()) : "";
+    const hint = hit === "far"
+      ? (i.matchedIn?.filter((m) => m !== "semantic").length
+        ? `matched in the ${i.matchedIn.filter((m) => m !== "semantic").join(", ")}`
+        : "matched by meaning")
+      : hit === "body" ? snippet(i.body, this.queryQ()) : "";
     return h_flex().id(`kata-hit-${i.uid}`).flex_none().mx(6).px(8).py(4).gap(6).rounded(6)
       .items_center().cursor_pointer().hover((s) => s.bg(t.hover))
-      .on_click((_e, cx) => this.open(i.uid, cx))
+      .on_click((_e, cx) => hit === "far" ? this.openFar(i, cx) : this.open(i.uid, cx))
       .child(i.closed
         ? svg(`${ICONS}/check-circle.svg`).size(11).flex_none().text_color(t.done)
         : div().w(11).flex_none().flex().items_center().justify_center()
@@ -2749,28 +2934,55 @@ export default class Kata extends View {
         .child("Search all statuses"));
   }
 
+  // The spinner a slow semantic ask earns: a turning circle and a word, drawn
+  // above the results while `kata search` runs past its grace. The turning is
+  // native — it spins while drawn, no render per frame — and the delay before
+  // it shows keeps a fast answer from ever flashing it.
+  farSpinner() {
+    const t = theme();
+    return h_flex().id("kata-far-spinner").flex_none().px(16).pt(8).pb(2).gap(6).items_center()
+      .child(svg(`${ICONS}/refresh.svg`).size(11).flex_none().text_color(t.dim).spin(400))
+      .child(div().text_size(10.5).text_color(t.dim)
+        .child(this.status === "all" ? "searching the whole project by meaning…" : `searching the ${this.status} issues by meaning…`));
+  }
+
   // What the query found, in place of the tree: the matches that are the id or
-  // the title, then the matches in the description, each group in work order. A
-  // search narrows the same list the filters above it made, so the counts, the
-  // empty state and the ceiling note are the same ones the tree would say — the
-  // task the person is hunting is not declared gone, it is declared filtered.
+  // the title, then the matches in the description, each group in work order,
+  // then what `kata search` found by meaning — the wider net, drawn last so the
+  // list's own answers read first. A search narrows the same list the filters
+  // above it made — status asked of kata, branch applied here — so the counts,
+  // the empty state and the ceiling note are the same ones the tree would say — the task the person is hunting is not
+  // declared gone, it is declared filtered.
   results(cx) {
     const t = theme();
     const q = this.queryQ();
     const found = this.matches(q);
-    const total = found.names.length + found.bodies.length;
+    const total = found.names.length + found.bodies.length + found.far.length;
     const group = (label, count) => div().px(16).pt(6).pb(2).text_size(10).text_color(t.dim)
       .child(`${count} ${label}`);
     const note = this.footNote();
     return v_flex().id("kata-scroll").flex_1().min_h(0).overflow_y_scrollbar().py(4)
-      .when(total === 0, (el) => el.child(v_flex().px(16).py(14).gap(5)
+      .when(this.searching() && this.farBusy && this.farSlow, (el) => el.child(this.farSpinner()))
+      .when(total === 0 && !this.farBusy, (el) => el.child(v_flex().px(16).py(14).gap(5)
         .child(div().text_size(12.5).text_color(t.muted).child(`Nothing matches "${this.query.trim()}"`))
         .child(div().text_size(11.5).text_color(t.dim).child(this.missLine()))
+        .when(this.searching() && farWorthy(q) && this.farQuery === q && !this.farError, (el) => el
+          .child(div().text_size(11.5).text_color(t.dim)
+            .child("kata's search by meaning found nothing either.")))
         .when(this.status !== "all", (el) => el.child(this.statusEscape(cx)))))
+      .when(total === 0 && this.farBusy, (el) => el.child(v_flex().px(16).py(14).gap(5)
+        .child(div().text_size(12.5).text_color(t.muted).child(`Nothing matches "${this.query.trim()}" in this list`))
+        .child(div().text_size(11.5).text_color(t.dim).child(this.missLine()))
+        .child(div().text_size(11.5).text_color(t.dim)
+          .child("Asking kata's search — matches by meaning take a moment…"))))
       .when(found.names.length > 0, (el) => el.child(group("in the id or title", found.names.length)))
       .children(found.names.map((i) => this.hitRow(i, "name", cx)))
       .when(found.bodies.length > 0, (el) => el.child(group("in the description", found.bodies.length)))
       .children(found.bodies.map((i) => this.hitRow(i, "body", cx)))
+      .when(found.far.length > 0, (el) => el.child(group("found by meaning", found.far.length)))
+      .children(found.far.map((i) => this.hitRow(i, "far", cx)))
+      .when(Boolean(this.farError) && total === 0, (el) => el
+        .child(div().px(16).pt(4).text_size(11).text_color(t.dim).child(this.farError)))
       .when(Boolean(note), (el) => el
         .child(div().px(16).pt(4).text_size(10.5).text_color(t.dim).child(note)))
       .when(this.truncated, (el) => el.child(this.moreButton(cx)));

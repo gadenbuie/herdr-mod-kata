@@ -2,8 +2,9 @@
 
 A panel of the space's kata issues, shown as a tree: the open work, each
 task under its parent, and a detail view for any issue. Status and branch
-filters narrow the list, a search covers ids, titles and bodies, and parents
-fold. On its own it is a panel. With tab-host it also becomes a tab: a
+filters narrow the list, a search covers ids, titles and bodies — and a
+sentence-like query also asks `kata search` for matches by meaning — and
+parents fold. On its own it is a panel. With tab-host it also becomes a tab: a
 **Kata** button beside Files and Changes opens it in the side panel.
 
 ![Kata](preview.png)

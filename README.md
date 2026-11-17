@@ -4,7 +4,8 @@ A [Herdr](https://herdr.dev) panel (`herdr-app`; written against 0.1.12) that
 shows the space's [kata](https://katatracker.com) issues as a read-only tree:
 the open work of the project you are in, which task belongs under which, with a
 status filter, a branch filter that follows the checkout, a search over ids,
-titles and bodies, and a detail view per issue. With the
+titles and bodies (a sentence-like query also asks kata's semantic search), and
+a detail view per issue. With the
 [tab-host](https://github.com/gadenbuie/herdr-mod-tab-host) mod it also gets a
 **Kata** button beside Files and Changes, which opens it as a tab in the side
 panel.
@@ -61,7 +62,15 @@ manifest is the whole contract.
 - **The search**, over ids, titles and bodies of the rows in hand — one pass,
   no second read. Hits in ids and titles sit above hits in bodies, a body hit
   carries the line that matched, and a search that finds nothing says what it
-  searched and offers the one click that widens it.
+  searched and offers the one click that widens it. A query that reads like a
+  sentence — two words, or one long one — also asks `kata search` behind a short
+  pause, one call however fast the typing, and what it finds by meaning draws
+  under the list's own as its own group, the same filters holding for it —
+  status asked of kata, branch applied here — so its wider reach is exactly
+  what the list's own two passes cannot see: issues past the ceiling the read
+  stopped at, and matches kata found in the comments. An ask that runs past a
+  moment's grace earns a spinner above the results, so a slow search is never a
+  silent one.
 - **The events**: the pulse button in the header opens the project's event
   stream — `kata events`' own record of what has happened, newest first,
   grouped under day headers, polled forward every 15 s while it is showing.

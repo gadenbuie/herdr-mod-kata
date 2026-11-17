@@ -2210,10 +2210,10 @@ export default class Kata extends View {
       const actors = [...by.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
       return this.menuShell("kata-events-authors")
         .child(this.menuRow("kata-ev-author-all", "Everyone", total, this.eventsAuthor == null,
-          () => { this.eventsAuthor = null; this.eventsPick = null; }))
+          (cx) => { this.eventsAuthor = null; this.eventsPick = null; cx.notify(); }))
         .children(actors.map(([who, n], i) =>
           this.menuRow(`kata-ev-author-${i}`, who, n, this.eventsAuthor === who,
-            () => { this.eventsAuthor = who; this.eventsPick = null; })));
+            (cx) => { this.eventsAuthor = who; this.eventsPick = null; cx.notify(); })));
     }
     const by = new Map();
     for (const ev of this.events) {
@@ -2222,10 +2222,10 @@ export default class Kata extends View {
     }
     return this.menuShell("kata-events-kinds")
       .child(this.menuRow("kata-ev-kind-all", "All events", total, this.eventsKind == null,
-        () => { this.eventsKind = null; this.eventsPick = null; }))
+        (cx) => { this.eventsKind = null; this.eventsPick = null; cx.notify(); }))
       .children(EVENT_KINDS.filter(([kind]) => by.has(kind)).map(([kind, label], i) =>
         this.menuRow(`kata-ev-kind-${i}`, label, by.get(kind), this.eventsKind === kind,
-          () => { this.eventsKind = kind; this.eventsPick = null; })));
+          (cx) => { this.eventsKind = kind; this.eventsPick = null; cx.notify(); })));
   }
 
   // The card a filter's dropdown menu is drawn on: `background`, a 1 px
